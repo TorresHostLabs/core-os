@@ -200,6 +200,40 @@ app.get('/api/arquivo', (req, res) => {
   res.sendFile(real, { dotfiles: 'allow', headers: { 'Cache-Control': 'no-cache' } });
 });
 
+// ---------- editor de notas ----------
+// só edita .md/.txt que já existem dentro do cérebro; `versao` (mtime) evita sobrescrever mudança feita por outra conversa
+const EDITAVEL = /\.(md|txt)$/i;
+const LIMITE_NOTA = 900_000;
+function notaEditavel(rel) {
+  const real = dentroDoVault(rel);
+  if (!real || !EDITAVEL.test(real)) return null;
+  const st = fs.statSync(real);
+  return st.isFile() ? { real, st } : null;
+}
+app.get('/api/nota', (req, res) => {
+  const n = notaEditavel(req.query.caminho);
+  if (!n) return res.status(404).json({ erro: 'Nota não encontrada (só .md e .txt podem ser editados).' });
+  if (n.st.size > LIMITE_NOTA) return res.status(413).json({ erro: 'Nota grande demais para o editor.' });
+  res.json({ conteudo: fs.readFileSync(n.real, 'utf8'), versao: n.st.mtimeMs });
+});
+app.put('/api/nota', (req, res) => {
+  const { caminho, conteudo, versao, forcar } = req.body || {};
+  const n = notaEditavel(caminho);
+  if (!n) return res.status(404).json({ erro: 'Nota não encontrada (só .md e .txt podem ser editados).' });
+  if (typeof conteudo !== 'string') return res.status(400).json({ erro: 'Conteúdo inválido.' });
+  if (Buffer.byteLength(conteudo) > LIMITE_NOTA) return res.status(413).json({ erro: 'Nota grande demais.' });
+  if (!forcar && n.st.mtimeMs !== versao) return res.status(409).json({ erro: 'A nota mudou no servidor desde que você abriu.' });
+  const tmp = `${n.real}.${process.pid}.salvando`;
+  try {
+    fs.writeFileSync(tmp, conteudo, { mode: n.st.mode & 0o777 });
+    fs.renameSync(tmp, n.real);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch { /* */ }
+    return res.status(500).json({ erro: 'Não consegui salvar.' });
+  }
+  res.json({ ok: true, versao: fs.statSync(n.real).mtimeMs });
+});
+
 // ---------- conteúdos (pastas com capa, download e envio) ----------
 const IMAGEM = /\.(png|jpe?g|webp|gif|svg)$/i;
 const VIDEO = /\.(mp4|mov|webm|m4v)$/i;

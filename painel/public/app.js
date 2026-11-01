@@ -191,17 +191,78 @@ function renderizar(txt, caminho) {
   const html = marked.parse(txt, { gfm: true });
   const tmp = el('div', '', html);
   tmp.querySelectorAll('img').forEach((i) => { i.src = resolver(decodeURI(i.getAttribute('src'))); });
-  tmp.querySelectorAll('script, iframe, object').forEach((n) => n.remove());
+  tmp.querySelectorAll('script, iframe, object, embed, form, link, meta, base').forEach((n) => n.remove());
+  // sem handlers inline (onerror=…) nem javascript: — nota é conteúdo não confiável
+  tmp.querySelectorAll('*').forEach((n) => {
+    for (const at of [...n.attributes]) {
+      const v = at.value.trim().toLowerCase();
+      if (/^on/i.test(at.name) || ((at.name === 'href' || at.name === 'src' || at.name === 'xlink:href' || at.name === 'action') && /^(javascript|vbscript|data:text\/html)/.test(v.replace(/[\s\u0000-\u001f]/g, '')))) n.removeAttribute(at.name);
+    }
+  });
   return (fm ? `<div class="frontmatter">${esc(fm)}</div>` : '') + tmp.innerHTML;
 }
 
 function cardArquivo(caminho, x, y) {
   const t = tipoDe(caminho);
   const tam = t === 'imagem' ? { w: 380, h: 430 } : t === 'video' ? { w: 340, h: 600 } : { w: 560, h: 620 };
-  return criarCard({
+  const card = criarCard({
     chave: `arq:${caminho}`, classe: t === 'texto' || t === 'outro' ? 'card-doc' : 'card-midia',
     icone: t === 'imagem' ? 'imagem' : t === 'video' ? 'filme' : 'doc',
     titulo: nomeDe(caminho), sub: caminho.split('/').slice(-2, -1)[0] || '', x, y, ...tam, corpo: corpoDeArquivo(caminho),
+    extras: /\.(md|txt)$/i.test(caminho) ? '<button class="botao-leve botao-editar" data-editar title="Editar nota">Editar</button>' : '',
+  });
+  if (/\.(md|txt)$/i.test(caminho)) card.querySelector('[data-editar]').addEventListener('click', () => editarNota(card, caminho));
+  return card;
+}
+
+// ---------- editor de notas ----------
+const sujos = new Set(); // cards com alterações não salvas
+addEventListener('beforeunload', (e) => { if (sujos.size) { e.preventDefault(); e.returnValue = ''; } });
+async function editarNota(card, caminho) {
+  if (card.querySelector('.editor')) return;
+  const corpo = card.querySelector('.card-corpo'); const leitura = corpo.querySelector('.md');
+  const botao = card.querySelector('[data-editar]'); botao.disabled = true;
+  let nota;
+  try { nota = await api(`/api/nota?caminho=${encodeURIComponent(caminho)}`); } catch { botao.disabled = false; return; }
+  if (nota.erro) { botao.disabled = false; alert(nota.erro); return; }
+  let versao = nota.versao; let original = nota.conteudo;
+  const ed = el('div', 'editor');
+  const area = el('textarea', 'editor-area'); area.value = original; area.spellcheck = false; area.setAttribute('aria-label', `Editar ${nomeDe(caminho)}`);
+  const barra = el('div', 'editor-barra');
+  const msg = el('span', 'editor-msg'); msg.setAttribute('role', 'status');
+  const salvar = el('button', 'botao-leve botao-salvar'); salvar.type = 'button'; salvar.textContent = 'Salvar';
+  const cancelar = el('button', 'botao-leve'); cancelar.type = 'button'; cancelar.textContent = 'Cancelar';
+  barra.append(msg, cancelar, salvar); ed.append(barra, area);
+  leitura.hidden = true; corpo.prepend(ed); area.focus(); botao.hidden = true;
+  const sujo = () => area.value !== original;
+  const marcar = () => { sujos[sujo() ? 'add' : 'delete'](card); msg.textContent = sujo() ? 'Alterações não salvas' : ''; msg.className = 'editor-msg'; };
+  area.addEventListener('input', marcar);
+  const sair = (releitura) => {
+    sujos.delete(card); ed.remove(); leitura.hidden = false; botao.hidden = false; botao.disabled = false;
+    if (releitura != null) leitura.innerHTML = renderizar(releitura, caminho);
+  };
+  async function gravar(forcar = false) {
+    salvar.disabled = true; msg.textContent = 'Salvando…'; msg.className = 'editor-msg';
+    let r;
+    try { r = await fetch('/api/nota', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caminho, conteudo: area.value, versao, forcar }) }); }
+    catch { salvar.disabled = false; msg.textContent = 'Sem conexão. Nada foi perdido, tente de novo.'; msg.className = 'editor-msg erro'; return; }
+    if (r.status === 401) { mostrarLogin(); salvar.disabled = false; return; }
+    const j = await r.json().catch(() => ({}));
+    salvar.disabled = false;
+    if (r.status === 409) {
+      msg.className = 'editor-msg erro'; msg.textContent = 'A nota mudou no servidor. ';
+      const b = el('button', 'editor-link'); b.type = 'button'; b.textContent = 'Sobrescrever com a minha versão';
+      b.addEventListener('click', () => gravar(true)); msg.append(b); return;
+    }
+    if (!r.ok) { msg.className = 'editor-msg erro'; msg.textContent = j.erro || 'Não consegui salvar.'; return; }
+    versao = j.versao; original = area.value; sair(original);
+  }
+  salvar.addEventListener('click', () => gravar());
+  cancelar.addEventListener('click', () => { if (sujo() && !confirm('Descartar as alterações?')) return; sair(); });
+  area.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); gravar(); }
+    if (e.key === 'Escape') cancelar.click();
+    if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); document.execCommand('insertText', false, '  '); }
   });
 }
 
@@ -218,6 +279,9 @@ function abrirArquivo(caminho) {
   marcarArvore(caminho);
 }
 function fecharArquivo(caminho) {
+  const c = mundo.querySelector(`.card[data-chave="${CSS.escape(`arq:${caminho}`)}"]`);
+  if (c && sujos.has(c) && !confirm('Esta nota tem alterações não salvas. Fechar mesmo assim?')) return;
+  sujos.delete(c);
   const e = espaco(); e.abertos = e.abertos.filter((c) => c !== caminho); delete e.pos[`arq:${caminho}`]; salvarEspaco(e);
   mundo.querySelector(`.card[data-chave="${CSS.escape(`arq:${caminho}`)}"]`)?.remove();
 }
