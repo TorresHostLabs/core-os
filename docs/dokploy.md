@@ -8,12 +8,12 @@ Imagem: `ghcr.io/torreshostlabs/core-os` (tags `latest`, `sha-<commit>` e `v*`).
 Workflow `.github/workflows/imagem.yml`. Para economizar minutos, ele **só roda**:
 - num push na `main` que mude `painel/`, `cerebro-demo/`, `Dockerfile` ou `docker/`;
 - ao criar uma tag `v*`;
-- manualmente (aba **Actions** › "Imagem do painel" › **Run workflow**). Rodando numa branch, publica só a tag `sha-…`, nunca `latest`.
+- manualmente (aba **Actions** › "Imagem do painel" › **Run workflow**). O botão só aparece depois que o workflow existe na `main`. Rodando a partir de outra branch, publica só a tag `sha-…`, nunca `latest`.
 
 Antes de publicar, o workflow sobe o container e confere que o painel responde, que o login funciona e que o Codex CLI está presente. As camadas que não mudaram vêm do cache.
 
 ## Passo a passo
-1. **Rodar o workflow uma vez** (ou fazer o merge na `main`) para a imagem existir.
+1. **Fazer o merge na `main`**: o push dispara o workflow e a primeira imagem é publicada (acompanhe na aba **Actions**). Antes do merge o workflow ainda não existe na `main`, então não há imagem no GHCR.
 2. **Visibilidade do pacote.** O GHCR cria o pacote como *privado*. Escolha uma opção:
    - tornar público: GitHub › seu perfil/organização › **Packages** › `core-os` › *Package settings* › *Change visibility*; ou
    - manter privado e cadastrar um registry no Dokploy (`ghcr.io`, seu usuário e um token com `read:packages`).
