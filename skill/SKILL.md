@@ -18,7 +18,7 @@ E pergunte se quer os **4 exemplos prontos** (WhatsApp, carrossel, thumbnail, ed
 Rode `claude --version`. O painel e o WhatsApp usam a assinatura que está logada aqui, então o login tem que estar feito (se você está rodando, está).
 
 ## 3. Rodar o instalador
-Se você chegou aqui pelo prompt de instalação, o repositório já está em `/root/core-os` (senão: `git clone https://github.com/felipefernandees/core-os /root/core-os`). Rode na pasta `skill/`:
+Se você chegou aqui pelo prompt de instalação, o repositório já está em `/root/core-os` (senão: `git clone https://github.com/TorresHostLabs/core-os /root/core-os`). Rode na pasta `skill/`:
 ```bash
 cd /root/core-os/skill && sudo bash instalar.sh --nome "NOME" [--dominio cerebro.seusite.com] [--senha "SENHA"] [--sem-exemplos]
 ```
