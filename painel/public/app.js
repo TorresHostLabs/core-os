@@ -357,15 +357,16 @@ async function pintarHistorico(conv, forcar) {
   const corpo = mundo.querySelector('.card-historico .historico');
   if (!corpo) return;
   const itens = await api(`/api/conversas/${conv.id}/historico`);
-  const ass = `${conv.id}:${itens.length}:${itens.at(-1)?.texto?.length || 0}`;
+  const ass = `${conv.id}:${itens.length}:${itens.at(-1)?.texto?.length || 0}:${itens.at(-1)?.parcial ? 'p' : ''}`;
   if (!forcar && ass === assinaturaHistorico) return;
   assinaturaHistorico = ass;
+  const noFim = corpo.scrollHeight - corpo.scrollTop - corpo.clientHeight < 80; // quem subiu pra ler mensagens antigas não é puxado de volta
   const hora = (t) => (t ? new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '');
   corpo.innerHTML = itens.length ? itens.map((i) => (i.papel === 'acao'
     ? `<div class="hist-acao">${ic('seta')}<span>${esc(i.texto)}</span></div>`
-    : `<div class="hist-msg ${i.papel}"><div class="balao">${i.papel === 'claude' ? renderizar(i.texto, 'x.md') : esc(i.texto).replace(/\n/g, '<br>')}</div><small>${i.papel === 'voce' ? 'Você' : esc(conv.motorNome || 'Claude')} · ${hora(i.quando)}</small></div>`)).join('')
+    : `<div class="hist-msg ${i.papel}${i.parcial ? ' parcial' : ''}"><div class="balao">${i.papel === 'claude' ? renderizar(i.texto, 'x.md') : esc(i.texto).replace(/\n/g, '<br>')}</div><small>${i.papel === 'voce' ? 'Você' : esc(conv.motorNome || 'Claude')} · ${hora(i.quando)}</small></div>`)).join('')
     : '<p class="hist-vazio">A conversa aparece aqui assim que o agente começar a responder.</p>';
-  corpo.scrollTop = corpo.scrollHeight;
+  if (forcar || noFim) corpo.scrollTop = corpo.scrollHeight;
 }
 
 // ---------- desenhar o espaço ativo ----------
@@ -1124,6 +1125,11 @@ function cardChat(conv) {
   area.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!viva().processando) enviar(); } });
   pintarHistorico(conv, true).then(() => atualizarChat(viva()));
   setTimeout(() => area.focus(), 80);
+  // enquanto o agente responde, olha o histórico várias vezes por segundo pra mostrar o texto chegando
+  const rapido = setInterval(() => {
+    if (!card.isConnected) { clearInterval(rapido); return; }
+    if (viva().processando && !document.hidden) pintarHistorico(conv).catch(() => {});
+  }, 450);
   return card;
 }
 function atualizarChat(conv) {
@@ -1160,13 +1166,14 @@ async function abrirOpenAI() {
           <label>Limite de saída por resposta (tokens, 0 = sem limite)<input type="number" name="maxSaida" min="0" step="1" required></label>
           <label>Limite diário (tokens, 0 = sem limite)<input type="number" name="limiteDiario" min="0" step="1" required></label>
         </div>
+        <label class="agenda-check"><input type="checkbox" name="streaming"> Mostrar a resposta em tempo real, palavra por palavra (desligue só se o servidor não suportar)</label>
         <label class="agenda-check"><input type="checkbox" name="shell"> Permitir que o agente rode comandos de shell neste servidor (avançado)</label>
         <p class="config-dica"><b>Atenção:</b> sem isso o agente só lê e escreve arquivos do cérebro, o que é bem mais seguro. Com isso ligado ele pode rodar qualquer comando que o painel pode, inclusive a partir de mensagens do WhatsApp e de tarefas agendadas.</p>
         <p class="login-erro" id="openai-erro-cfg" role="alert"></p>
         <div class="config-botoes"><button type="submit" class="botao-leve botao-salvar">Salvar</button></div>
       </form>
       <section class="config-cartao"><dl class="config-linhas" id="openai-uso"></dl>
-        <p class="config-dica">Tokens contados pelo que a OpenAI informa a cada resposta. O custo em dinheiro depende do modelo escolhido: confira os preços atuais no painel da OpenAI. Esse motor não tem terminal nem skills do Claude Code: ele conversa pelo painel, pelo WhatsApp e pelos agendamentos.</p>
+        <p class="config-dica">Tokens contados pelo que a OpenAI informa a cada resposta; os "do cache" são entrada repetida que a OpenAI cobra mais barato (o cache é automático e depende do modelo). Se você interromper uma resposta no meio, os tokens dela podem não ser contados. O custo em dinheiro depende do modelo escolhido: confira os preços atuais no painel da OpenAI. Esse motor não tem terminal nem skills do Claude Code: ele conversa pelo painel, pelo WhatsApp e pelos agendamentos.</p>
       </section>`;
     $('#openai-form-chave').addEventListener('submit', salvarChaveOpenAI);
     $('#openai-form-cfg').addEventListener('submit', salvarCfgOpenAI);
@@ -1181,9 +1188,10 @@ async function pintarOpenAI(preencher) {
   $('#openai-chave-estado').textContent = k.configurada ? `Configurada (termina em ${k.final}) · ${k.origem === 'ambiente' ? 'definida no servidor' : 'guardada pelo painel'}` : 'Ainda não configurada';
   $('#openai-form-chave [data-openai="apagar-chave"]').hidden = k.origem !== 'painel';
   const f = $('#openai-form-cfg');
-  if (preencher) { f.modelo.value = d.config.modelo; f.maxPassos.value = d.config.maxPassos; f.maxSaida.value = d.config.maxSaida; f.limiteDiario.value = d.config.limiteDiario; f.shell.checked = d.config.shell; }
-  $('#openai-uso').innerHTML = `<div><dt>Hoje</dt><dd>${numeroBR(d.uso.hoje.entrada)} tokens de entrada · ${numeroBR(d.uso.hoje.saida)} de saída</dd></div>
-    <div><dt>Total (90 dias)</dt><dd>${numeroBR(d.uso.total.entrada)} de entrada · ${numeroBR(d.uso.total.saida)} de saída</dd></div>`;
+  if (preencher) { f.modelo.value = d.config.modelo; f.maxPassos.value = d.config.maxPassos; f.maxSaida.value = d.config.maxSaida; f.limiteDiario.value = d.config.limiteDiario; f.shell.checked = d.config.shell; f.streaming.checked = d.config.streaming; }
+  const pct = (u) => (u.entrada ? ` (${Math.round((u.cache / u.entrada) * 100)}% do cache)` : '');
+  $('#openai-uso').innerHTML = `<div><dt>Hoje</dt><dd>${numeroBR(d.uso.hoje.entrada)} tokens de entrada${pct(d.uso.hoje)} · ${numeroBR(d.uso.hoje.saida)} de saída</dd></div>
+    <div><dt>Total (90 dias)</dt><dd>${numeroBR(d.uso.total.entrada)} de entrada${pct(d.uso.total)} · ${numeroBR(d.uso.total.saida)} de saída</dd></div>`;
 }
 async function salvarChaveOpenAI(e) {
   e.preventDefault();
@@ -1209,7 +1217,7 @@ async function salvarCfgOpenAI(e) {
   e.preventDefault();
   const f = e.target; const erro = $('#openai-erro-cfg'); erro.textContent = '';
   const r = await fetch('/api/config/openai', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ modelo: f.modelo.value, maxPassos: Number(f.maxPassos.value), maxSaida: Number(f.maxSaida.value), limiteDiario: Number(f.limiteDiario.value), shell: f.shell.checked }) });
+    body: JSON.stringify({ modelo: f.modelo.value, maxPassos: Number(f.maxPassos.value), maxSaida: Number(f.maxSaida.value), limiteDiario: Number(f.limiteDiario.value), shell: f.shell.checked, streaming: f.streaming.checked }) });
   if (r.status === 401) return mostrarLogin();
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { erro.textContent = j.erro || 'Não consegui salvar.'; return; }

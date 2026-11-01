@@ -11,6 +11,9 @@ const MAX_RESULTADO = 30_000; // caracteres devolvidos por ferramenta
 const MAX_ARQUIVO = 1_000_000; // bytes lidos ou escritos
 const LIMITE_CONTEXTO = 400_000; // caracteres de histórico enviados (~100 mil tokens); o mais antigo cai fora
 
+const SEM_DADOS_MS = Number(process.env.OPENAI_IDLE_MS) || 120_000; // tempo sem nenhum dado antes de desistir
+const NA_OPENAI = (() => { try { return new URL(BASE).hostname === 'api.openai.com'; } catch { return false; } })();
+
 let CTX = { dados: '', vault: '' };
 export function iniciarOpenAI({ dados, vault }) {
   CTX = { dados, vault };
@@ -24,7 +27,7 @@ const arqUso = () => path.join(CTX.dados, 'openai-uso.json');
 const lerJson = (f, padrao) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return padrao; } };
 
 export function lerConfigOpenAI() {
-  const c = { modelo: process.env.OPENAI_MODEL || '', shell: false, maxPassos: 20, maxSaida: 0, limiteDiario: 0, ...lerJson(arqCfg(), {}) };
+  const c = { modelo: process.env.OPENAI_MODEL || '', shell: false, streaming: true, maxPassos: 20, maxSaida: 0, limiteDiario: 0, ...lerJson(arqCfg(), {}) };
   return c;
 }
 export function gravarConfigOpenAI(parcial) {
@@ -36,6 +39,7 @@ export function gravarConfigOpenAI(parcial) {
     n.modelo = m;
   }
   if (parcial.shell !== undefined) n.shell = Boolean(parcial.shell);
+  if (parcial.streaming !== undefined) n.streaming = Boolean(parcial.streaming);
   const inteiro = (v, min, max, nome) => { const x = Number(v); if (!Number.isInteger(x) || x < min || x > max) throw new Error(`${nome}: use um número inteiro de ${min} a ${max}.`); return x; };
   if (parcial.maxPassos !== undefined) n.maxPassos = inteiro(parcial.maxPassos, 1, 100, 'Passos por pedido');
   if (parcial.maxSaida !== undefined) n.maxSaida = inteiro(parcial.maxSaida, 0, 200_000, 'Limite de saída');
@@ -66,41 +70,91 @@ const hoje = () => new Intl.DateTimeFormat('en-CA', { timeZone: FUSO }).format(n
 export function usoOpenAI() {
   const u = lerJson(arqUso(), { dias: {} });
   const dias = Object.values(u.dias);
-  return { hoje: u.dias[hoje()] || { entrada: 0, saida: 0 }, total: dias.reduce((a, d) => ({ entrada: a.entrada + d.entrada, saida: a.saida + d.saida }), { entrada: 0, saida: 0 }) };
+  const vazio = { entrada: 0, saida: 0, cache: 0 };
+  const completa = (d) => ({ ...vazio, ...d });
+  return { hoje: completa(u.dias[hoje()]), total: dias.reduce((a, d) => ({ entrada: a.entrada + d.entrada, saida: a.saida + d.saida, cache: a.cache + (d.cache || 0) }), vazio) };
 }
-function somarUso(entrada, saida) {
+function somarUso(entrada, saida, cache = 0) {
   const u = lerJson(arqUso(), { dias: {} });
-  const k = hoje(); const d = u.dias[k] || { entrada: 0, saida: 0 };
-  u.dias[k] = { entrada: d.entrada + entrada, saida: d.saida + saida };
+  const k = hoje(); const d = u.dias[k] || { entrada: 0, saida: 0, cache: 0 };
+  u.dias[k] = { entrada: d.entrada + entrada, saida: d.saida + saida, cache: (d.cache || 0) + cache };
   for (const dia of Object.keys(u.dias).sort().slice(0, -90)) delete u.dias[dia]; // guarda 90 dias
   fs.writeFileSync(arqUso(), JSON.stringify(u));
 }
 
 // ---------- API ----------
-async function chamarApi(caminho, { metodo = 'GET', corpo, sinal, chave = chaveOpenAI() } = {}) {
+// Lê a resposta em streaming (SSE do Chat Completions) e devolve no mesmo formato de uma resposta normal.
+async function lerStream(corpo, rearmar, aoTexto) {
+  const dec = new TextDecoder(); let buf = '';
+  const msg = { content: '', refusal: '', tool_calls: [] }; let fim = null; let usage = null;
+  const bloco = (txt) => {
+    for (const linha of txt.split(/\r?\n/)) {
+      if (!linha.startsWith('data:')) continue;
+      const dado = linha.slice(5).trim();
+      if (!dado || dado === '[DONE]') continue;
+      let j; try { j = JSON.parse(dado); } catch { continue; }
+      if (j.error) throw Object.assign(new Error(`A OpenAI interrompeu a resposta: ${j.error.message || 'erro sem detalhe'}`), { doServidor: true });
+      if (j.usage) usage = j.usage;
+      const ch = j.choices?.[0]; if (!ch) continue;
+      if (ch.finish_reason) fim = ch.finish_reason;
+      const d = ch.delta || {};
+      if (d.content) { msg.content += d.content; aoTexto?.(msg.content); }
+      if (d.refusal) msg.refusal += d.refusal;
+      for (const tc of d.tool_calls || []) {
+        const cur = (msg.tool_calls[tc.index ?? 0] ||= { id: '', type: 'function', function: { name: '', arguments: '' } });
+        if (tc.id) cur.id = tc.id;
+        if (tc.function?.name && !cur.function.name) cur.function.name = tc.function.name;
+        if (tc.function?.arguments) cur.function.arguments += tc.function.arguments;
+      }
+    }
+  };
+  for await (const pedaco of corpo) {
+    rearmar();
+    buf += dec.decode(pedaco, { stream: true });
+    let i;
+    while ((i = buf.search(/\r?\n\r?\n/)) >= 0) { const b = buf.slice(0, i); buf = buf.slice(i).replace(/^\r?\n\r?\n/, ''); bloco(b); }
+  }
+  if (buf.trim()) bloco(buf);
+  const tool_calls = msg.tool_calls.filter(Boolean).map((c, n) => ({ ...c, id: c.id || `call_${Date.now()}_${n}` }));
+  return { usage, choices: [{ finish_reason: fim, message: { role: 'assistant', content: msg.content || null, refusal: msg.refusal || null, ...(tool_calls.length ? { tool_calls } : {}) } }] };
+}
+
+async function chamarApi(caminho, { metodo = 'GET', corpo, sinal, chave = chaveOpenAI(), stream = false, aoTexto } = {}) {
   if (!chave) throw new Error('Falta a chave da API da OpenAI (Configurações › OpenAI).');
   let ultimo;
   for (let tentativa = 0; tentativa < 4; tentativa++) {
-    const limite = AbortSignal.timeout(180_000);
-    let r;
+    const ctrl = new AbortController();
+    const aoCancelar = () => ctrl.abort();
+    sinal?.addEventListener('abort', aoCancelar, { once: true });
+    let ocioso; let desistiu = false; let recebeu = false;
+    // sem nenhum dado por SEM_DADOS_MS (ou 3 min numa chamada comum): desiste. Em streaming, cada pedaço recebido zera o relógio.
+    const armar = () => { clearTimeout(ocioso); ocioso = setTimeout(() => { desistiu = true; ctrl.abort(); }, stream ? SEM_DADOS_MS : Math.max(SEM_DADOS_MS, 180_000)); };
     try {
-      r = await fetch(`${BASE}${caminho}`, {
-        method: metodo, headers: { Authorization: `Bearer ${chave}`, 'Content-Type': 'application/json' },
-        body: corpo ? JSON.stringify(corpo) : undefined, signal: sinal ? AbortSignal.any([sinal, limite]) : limite,
+      armar();
+      const r = await fetch(`${BASE}${caminho}`, {
+        method: metodo, signal: ctrl.signal,
+        headers: { Authorization: `Bearer ${chave}`, 'Content-Type': 'application/json', ...(stream ? { Accept: 'text/event-stream' } : {}) },
+        body: corpo ? JSON.stringify(stream ? { ...corpo, stream: true, stream_options: { include_usage: true } } : corpo) : undefined,
       });
+      if (r.ok) {
+        if (stream && /event-stream/i.test(r.headers.get('content-type') || '')) { recebeu = true; return await lerStream(r.body, armar, aoTexto); }
+        return await r.json(); // sem streaming (ou servidor que ignorou o pedido de stream)
+      }
+      const j = await r.json().catch(() => ({}));
+      const msg = j?.error?.message || '';
+      ultimo = new Error(`OpenAI respondeu ${r.status}${msg ? `: ${msg}` : ''}`);
+      if ((r.status !== 429 && r.status < 500) || /quota|billing/i.test(msg)) throw Object.assign(ultimo, { definitivo: true });
+      clearTimeout(ocioso);
+      await dormir(Math.min(20_000, Number(r.headers.get('retry-after')) * 1000 || 2000 * 2 ** tentativa), sinal);
     } catch (e) {
       if (sinal?.aborted) throw new Error('Interrompido.');
+      if (e.definitivo || e.doServidor) throw e;
+      if (desistiu) throw new Error(`A OpenAI parou de responder (sem dados por ${Math.round(SEM_DADOS_MS / 1000)} segundos).`);
+      if (recebeu) throw new Error(`A conexão com a OpenAI caiu no meio da resposta: ${e.cause?.code || e.message}`);
+      if (/^OpenAI respondeu/.test(e.message)) throw e;
       ultimo = new Error(`Sem conexão com a OpenAI: ${e.cause?.code || e.message}`);
-      await dormir(1500 * (tentativa + 1), sinal); continue;
-    }
-    if (r.ok) return r.json();
-    const j = await r.json().catch(() => ({}));
-    const msg = j?.error?.message || '';
-    ultimo = new Error(`OpenAI respondeu ${r.status}${msg ? `: ${msg}` : ''}`);
-    if (r.status !== 429 && r.status < 500) throw ultimo; // erro do pedido (chave, modelo, formato): repetir não adianta
-    if (/quota|billing/i.test(msg)) throw ultimo; // sem crédito: repetir não adianta
-    const espera = Math.min(20_000, Number(r.headers.get('retry-after')) * 1000 || 2000 * 2 ** tentativa);
-    await dormir(espera, sinal);
+      await dormir(1500 * (tentativa + 1), sinal);
+    } finally { clearTimeout(ocioso); sinal?.removeEventListener('abort', aoCancelar); }
   }
   throw ultimo;
 }
@@ -273,7 +327,11 @@ async function executarFerramenta(nome, args, ctx) {
 const arqConversa = (id) => path.join(CTX.dados, 'openai', `${String(id).replace(/[^0-9a-f-]/gi, '')}.json`);
 const carregar = (id) => lerJson(arqConversa(id), { mensagens: [], itens: [], uso: { entrada: 0, saida: 0 } });
 const guardar = (id, est) => { const f = arqConversa(id); fs.writeFileSync(`${f}.tmp`, JSON.stringify(est)); fs.renameSync(`${f}.tmp`, f); };
-export const historicoOpenAI = (id) => carregar(id).itens;
+const parciais = new Map(); // id da conversa -> texto que está chegando em streaming
+export function historicoOpenAI(id) {
+  const itens = carregar(id).itens; const p = parciais.get(id);
+  return p ? [...itens, { papel: 'claude', texto: p, quando: Date.now(), parcial: true }] : itens;
+}
 export const usoConversaOpenAI = (id) => carregar(id).uso;
 
 // tira as voltas mais antigas quando o histórico passa do limite (sempre começando numa mensagem do usuário)
@@ -290,13 +348,13 @@ function podar(mensagens) {
 function sistema(prompt, shell) {
   let regras = '';
   for (const n of ['AGENTS.md', 'CLAUDE.md']) { try { regras = fs.readFileSync(path.join(CTX.vault, n), 'utf8').slice(0, 20_000); if (regras) break; } catch { /* */ } }
-  const agora = new Intl.DateTimeFormat('pt-BR', { timeZone: FUSO, dateStyle: 'full', timeStyle: 'short' }).format(new Date());
+  // nada que mude de um pedido pro outro (hora, etc.): o início idêntico é o que o cache automático da OpenAI reaproveita
   return [
     'Você é o agente do Core OS, o segundo cérebro do dono: uma pasta de arquivos .md. Responda sempre em português do Brasil.',
     `Você trabalha só com ferramentas (${esquemaFerramentas(shell).map((f) => f.function.name).join(', ')}). Os caminhos são relativos à pasta do cérebro ("" ou "." é a raiz).`,
     'Leia um arquivo antes de editá-lo e não invente o que não leu. Se uma ferramenta der erro, leia a mensagem e tente de outro jeito.',
     shell ? '' : 'Você não tem terminal neste servidor: se algo exigir rodar comando, diga ao dono o que precisaria.',
-    `Agora em Brasília: ${agora}.`,
+    'A data e a hora de Brasília vêm no começo de cada mensagem do dono, entre colchetes.',
     prompt || '',
     regras ? `\n--- Regras deste cérebro ---\n${regras}` : '',
   ].filter(Boolean).join('\n');
@@ -316,10 +374,13 @@ export async function rodarOpenAI(conv, texto, { prompt, env, aoAcao } = {}) {
   const cfg = lerConfigOpenAI();
   const est = carregar(conv.id);
   const inicio = est.mensagens.length;
-  est.mensagens.push({ role: 'user', content: texto });
+  // a hora vai na mensagem (que vem depois do trecho repetido), não no prompt do sistema, pra não quebrar o cache
+  const agora = new Intl.DateTimeFormat('pt-BR', { timeZone: FUSO, dateStyle: 'full', timeStyle: 'short' }).format(new Date());
+  const carimbada = `[Agora em Brasília: ${agora}]\n\n${texto}`;
+  est.mensagens.push({ role: 'user', content: carimbada });
   est.itens.push({ papel: 'voce', texto, quando: Date.now() });
   guardar(conv.id, est);
-  let resposta = '';
+  let resposta = ''; let parcial = '';
   try {
     if (!cfg.modelo) throw new Error('Escolha um modelo em Configurações › OpenAI (API).');
     if (cfg.limiteDiario > 0) { const h = usoOpenAI().hoje; if (h.entrada + h.saida >= cfg.limiteDiario) throw new Error(`Limite diário de ${cfg.limiteDiario.toLocaleString('pt-BR')} tokens atingido. Ajuste em Configurações › OpenAI (API).`); }
@@ -330,9 +391,15 @@ export async function rodarOpenAI(conv, texto, { prompt, env, aoAcao } = {}) {
       podar(est.mensagens);
       const corpo = { model: cfg.modelo, messages: [{ role: 'system', content: sistema(prompt, cfg.shell) }, ...est.mensagens], tools };
       if (cfg.maxSaida > 0) corpo.max_completion_tokens = cfg.maxSaida;
-      const r = await chamarApi('/chat/completions', { metodo: 'POST', corpo, sinal: ctrl.signal });
-      const ent = r.usage?.prompt_tokens || 0; const sai = r.usage?.completion_tokens || 0;
-      est.uso.entrada += ent; est.uso.saida += sai; somarUso(ent, sai);
+      if (NA_OPENAI) corpo.prompt_cache_key = conv.id; // junta os pedidos da mesma conversa no mesmo cache
+      conv.ultimaAcao = 'Pensando…'; conv.ultimaAtividade = Date.now();
+      let r;
+      try {
+        r = await chamarApi('/chat/completions', { metodo: 'POST', corpo, sinal: ctrl.signal, stream: cfg.streaming,
+          aoTexto: (t) => { if (!parciais.has(conv.id)) conv.ultimaAcao = 'Escrevendo a resposta…'; parciais.set(conv.id, t); } });
+      } catch (e) { parcial = parciais.get(conv.id) || ''; throw e; } finally { parciais.delete(conv.id); }
+      const ent = r.usage?.prompt_tokens || 0; const sai = r.usage?.completion_tokens || 0; const cache = r.usage?.prompt_tokens_details?.cached_tokens || 0;
+      est.uso.entrada += ent; est.uso.saida += sai; est.uso.cache = (est.uso.cache || 0) + cache; somarUso(ent, sai, cache);
       const escolha = r.choices?.[0]; const msg = escolha?.message;
       if (!msg) throw new Error('A OpenAI respondeu sem mensagem.');
       const chamadas = (msg.tool_calls || []).filter((c) => c.type === 'function' || c.function);
@@ -355,7 +422,9 @@ export async function rodarOpenAI(conv, texto, { prompt, env, aoAcao } = {}) {
   } catch (e) {
     // mantém o histórico coerente: a volta vira "pergunta + aviso de erro", sem chamadas de ferramenta penduradas
     resposta = e.message === 'Interrompido.' ? 'Interrompido por você.' : `Não consegui concluir: ${e.message}`;
-    est.mensagens.splice(inicio, est.mensagens.length - inicio, { role: 'user', content: texto }, { role: 'assistant', content: resposta });
+    est.mensagens.splice(inicio, est.mensagens.length - inicio, { role: 'user', content: carimbada }, { role: 'assistant', content: resposta });
+    // o que já tinha chegado em streaming continua visível (só na tela; não entra no contexto da API)
+    if (parcial.trim()) est.itens.push({ papel: 'claude', texto: `${parcial.trim()}\n\n_(interrompido)_`, quando: Date.now() });
   } finally { rodando.delete(conv.id); }
   if (!est.itens.some((i) => i.papel === 'claude' && i.texto === resposta)) est.itens.push({ papel: 'claude', texto: resposta, quando: Date.now() });
   guardar(conv.id, est);
