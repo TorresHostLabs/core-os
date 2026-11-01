@@ -20,9 +20,9 @@ CORE_OS_ENV=/nao-existe CORE_OS_VAULT=../.teste/cerebro CORE_OS_DATA=../.teste/d
 ## Instalar numa VPS
 Abra o Claude Code na VPS e cole:
 
-> Clona o repositório https://github.com/felipefernandees/core-os em /root/core-os, lê o /root/core-os/skill/SKILL.md e instala o Core OS neste servidor seguindo ele.
+> Clona o repositório https://github.com/TorresHostLabs/core-os em /root/core-os, lê o /root/core-os/skill/SKILL.md e instala o Core OS neste servidor seguindo ele.
 
-Ou à mão: `git clone https://github.com/felipefernandees/core-os /root/core-os && cd /root/core-os/skill && sudo bash instalar.sh --nome "Seu Nome"`.
+Ou à mão: `git clone https://github.com/TorresHostLabs/core-os /root/core-os && cd /root/core-os/skill && sudo bash instalar.sh --nome "Seu Nome"`.
 
 ## Como funciona
 - Cada conversa do painel é um `claude --session-id <id>` real num terminal (node-pty), na pasta do cérebro, com prompt de sistema apontando a nota `sessoes/<id>.md`.
@@ -35,4 +35,5 @@ Ou à mão: `git clone https://github.com/felipefernandees/core-os /root/core-os
 - Painel aberto a partir de outra sessão do Claude Code: as variáveis `CLAUDE_CODE_*` herdadas fazem o filho não gravar histórico. O `envLimpo()` do server.js remove.
 - Portal do Maestri em segundo plano congela animação e o desenho do xterm (só no teste; navegador normal funciona).
 
-Licença: própria (Felipe Tâmbara). Dependências: MIT (express, ws, xterm, node-pty prebuilt, marked).
+## Créditos
+Adaptado por [TorresHostLabs](https://github.com/TorresHostLabs) a partir do projeto original **Core OS**, de Felipe Tâmbara ([felipefernandees/core-os](https://github.com/felipefernandees/core-os)). Licença do original: própria (Felipe Tâmbara). Dependências: MIT (express, ws, xterm, node-pty prebuilt, marked).
