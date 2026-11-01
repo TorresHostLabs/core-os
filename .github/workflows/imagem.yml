@@ -3,20 +3,12 @@ name: Imagem do painel
 # Constrói a imagem Docker do painel e publica no GHCR (ghcr.io/<dono>/<repo>).
 # O servidor (Dokploy) só puxa a imagem pronta: nada é compilado nele.
 #
-# Economia de minutos: só roda quando o painel muda na main, em tags v* ou manualmente,
-# e o cache do GitHub Actions reaproveita as camadas que não mudaram.
+# A imagem só é criada quando uma VERSÃO é publicada (tag vMAJOR.MINOR.PATCH), nunca por push na main nem manualmente.
+# Para lançar:  git tag v1.0.0 && git push origin v1.0.0   (ou GitHub › Releases › Draft a new release, criando a tag).
+# Economia de minutos: nada roda fora das versões, e o cache do GitHub Actions reaproveita as camadas que não mudaram.
 on:
   push:
-    branches: [main]
-    paths:
-      - 'painel/**'
-      - 'cerebro-demo/**'
-      - 'Dockerfile'
-      - 'docker/**'
-      - '.dockerignore'
-      - '.github/workflows/imagem.yml'
-    tags: ['v*']
-  workflow_dispatch:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
 
 permissions:
   contents: read
@@ -50,9 +42,9 @@ jobs:
         with:
           images: ${{ env.IMAGEM }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
             type=ref,event=tag
-            type=sha,format=short
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
       # 1) constrói e carrega localmente, sem publicar, pra testar antes
       - name: Construir (sem publicar)
