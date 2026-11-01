@@ -44,6 +44,7 @@ const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const url = (caminho) => `/api/arquivo?caminho=${encodeURIComponent(caminho)}`;
+const ehChat = (c) => c?.motor === 'openai'; // motor de API: sem terminal, a conversa é um chat
 const semTela = (c) => c.origem === 'whatsapp' || c.origem === 'agendamento'; // conversa que rodou sem terminal: card de histórico
 const tipoDe = (c) => (/\.(png|jpe?g|webp|gif|svg)$/i.test(c) ? 'imagem' : /\.(mp4|mov|webm|m4v)$/i.test(c) ? 'video' : /\.(md|txt|json|sh|js|csv|canvas)$/i.test(c) ? 'texto' : 'outro');
 const nomeDe = (c) => c.split('/').pop();
@@ -380,7 +381,7 @@ function desenharEspaco() {
       mundo.append(bv);
     }
   } else {
-    if (semTela(conv) && !assumidas.has(conv.id)) cardHistorico(conv); else cardTerminal(conv);
+    if (ehChat(conv)) cardChat(conv); else if (semTela(conv) && !assumidas.has(conv.id)) cardHistorico(conv); else cardTerminal(conv);
     desenharFilhos(conv);
   }
   for (const c of e.abertos) cardArquivo(c, 0, 0);
@@ -414,7 +415,7 @@ function desenharFilhos(conv) {
     card.dataset.pai = 'terminal';
   });
   const term = mundo.querySelector('.card[data-chave="terminal"] [data-status]');
-  if (term) { term.className = `pilula ${conv.trabalhando ? 'trabalhando' : ''}`; term.textContent = conv.trabalhando ? 'trabalhando' : conv.ativo ? 'pronto' : 'pausado'; }
+  if (term && !ehChat(conv)) { term.className = `pilula ${conv.trabalhando ? 'trabalhando' : ''}`; term.textContent = conv.trabalhando ? 'trabalhando' : conv.ativo ? 'pronto' : 'pausado'; }
   void e;
 }
 
@@ -499,15 +500,16 @@ function focarTerminal() {
 const MOTORES_UI = {
   claude: { empresa: 'Anthropic', instalar: 'Instala o Claude Code neste servidor (curl -fsSL https://claude.ai/install.sh | bash), confere com claude --version e me guia no login com a minha conta.' },
   codex: { empresa: 'OpenAI', instalar: 'Instala o Codex CLI da OpenAI neste servidor (npm i -g @openai/codex), confere com codex --version e me guia no login com a minha conta ChatGPT (codex login --device-auth). No fim, me avisa que já posso escolher o Codex numa conversa nova.' },
+  openai: { empresa: 'OpenAI · pela API' },
   antigravity: { empresa: 'Google', instalar: 'Instala o Antigravity CLI do Google neste servidor pelo instalador oficial (curl -fsSL https://antigravity.google/cli/install.sh | bash), confere se o comando agy funciona e me guia no login com a minha conta Google (link com código, pelo SSH). No fim, me avisa que já posso escolher o Antigravity numa conversa nova.' },
 };
 async function escolherMotor() {
   const mot = await api('/api/config/motores');
   $('#seletor-motores').innerHTML = Object.entries(mot.motores).map(([id, m]) => `
-    <button class="motor-opcao ${m.instalado ? '' : 'falta'}" data-acao="${m.instalado ? 'abrir-motor' : 'instalar-motor'}" data-motor="${id}">
+    <button class="motor-opcao ${m.instalado ? '' : 'falta'}" data-acao="${m.instalado ? 'abrir-motor' : id === 'openai' ? 'config-openai' : 'instalar-motor'}" data-motor="${id}">
       <img src="/logos/${id}.svg" alt="" width="40" height="40">
       <b>${esc(m.nome)}</b><span>${esc(MOTORES_UI[id]?.empresa || '')}</span>
-      <em>${m.instalado ? (mot.padrao === id ? 'Último usado' : 'Pronto') : 'Não instalado · instalar'}</em>
+      <em>${m.instalado ? (mot.padrao === id ? 'Último usado' : 'Pronto') : id === 'openai' ? 'Falta a chave · configurar' : 'Não instalado · instalar'}</em>
     </button>`).join('');
   $('#escolher-motor').hidden = false;
 }
@@ -521,7 +523,7 @@ async function novaConversa(pedido, motor) {
   const c = await api('/api/conversas', { method: 'POST', body: JSON.stringify(corpo) });
   await atualizarEstado();
   trocarPara(c.id);
-  setTimeout(focarTerminal, 150);
+  if (c.motor !== 'openai') setTimeout(focarTerminal, 150);
 }
 async function encerrar(c) {
   if (!confirm(`Encerrar "${c.titulo}"? A conversa fica salva no histórico do ${c.motorNome || 'Claude Code'}.`)) return;
@@ -535,7 +537,7 @@ async function atualizarEstado() {
   const antes = JSON.stringify(S.conversas.map((c) => [c.id, c.motor, c.titulo, c.nota, c.trabalhando, c.ativo, c.ultimaAcao, c.subagentes, c.midias]));
   S.conversas = await api('/api/estado');
   const ativa = S.conversas.find((c) => c.id === S.ativa);
-  if (ativa && semTela(ativa) && !assumidas.has(ativa.id)) pintarHistorico(ativa).catch(() => {});
+  if (ativa && (ehChat(ativa) || (semTela(ativa) && !assumidas.has(ativa.id)))) { pintarHistorico(ativa).catch(() => {}); atualizarChat(ativa); }
   const depois = JSON.stringify(S.conversas.map((c) => [c.id, c.motor, c.titulo, c.nota, c.trabalhando, c.ativo, c.ultimaAcao, c.subagentes, c.midias]));
   if (antes === depois) return;
   pintarConversas();
@@ -543,7 +545,7 @@ async function atualizarEstado() {
   if (conv) {
     desenharFilhos(conv);
     const titulo = mundo.querySelector('.card[data-chave="terminal"] .card-titulo');
-    if (titulo) titulo.innerHTML = `${esc(conv.titulo)} <span class="card-sub">${semTela(conv) && !assumidas.has(conv.id) ? (conv.origem === 'agendamento' ? 'Agendado' : 'WhatsApp') : esc(conv.motorNome || 'Claude Code')}</span>`;
+    if (titulo) titulo.innerHTML = `${esc(conv.titulo)} <span class="card-sub">${!ehChat(conv) && semTela(conv) && !assumidas.has(conv.id) ? (conv.origem === 'agendamento' ? 'Agendado' : 'WhatsApp') : esc(conv.motorNome || 'Claude Code')}</span>`;
     desenharLigacoes();
   }
 }
@@ -805,6 +807,8 @@ document.addEventListener('click', async (e) => {
   if (a === 'grafo') (Grafo.aberto ? Grafo.fechar() : Grafo.abrir());
   if (a === 'config') abrirConfig();
   if (a === 'agenda') abrirAgenda();
+  if (a === 'config-openai') abrirOpenAI();
+  if (a === 'fechar-openai') fecharOpenAI();
   if (a === 'backup') abrirBackup();
   if (a === 'fechar-backup') fecharBackup();
   if (a === 'fechar-agenda') fecharAgenda();
@@ -827,6 +831,7 @@ document.addEventListener('keydown', (e) => {
   else if (!$('#folha-config').hidden) fecharConfig();
   else if (!$('#folha-agenda').hidden) fecharAgenda();
   else if (!$('#folha-backup').hidden) fecharBackup();
+  else if (!$('#folha-openai').hidden) fecharOpenAI();
   else if (Grafo.aberto) Grafo.fechar();
 });
 
@@ -1088,6 +1093,137 @@ $('#folha-agenda')?.addEventListener('click', async (e) => {
   pintarAgenda();
 });
 
+// ---------- chat (motor de API: OpenAI) ----------
+function cardChat(conv) {
+  const card = criarCard({
+    chave: 'terminal', classe: 'card-terminal card-historico card-chat', icone: 'conversaNova', titulo: conv.titulo, sub: conv.motorNome || 'OpenAI (API)',
+    x: 0, y: 0, w: 860, h: 540, fechavel: false, extras: '<span class="pilula" data-status>pronto</span>',
+  });
+  const raiz = el('div', 'chat');
+  raiz.innerHTML = `<div class="historico"></div>
+    <form class="chat-entrada"><textarea class="chat-texto" rows="2" maxlength="20000" placeholder="Escreva pro seu cérebro… (Enter envia, Shift+Enter quebra a linha)" aria-label="Mensagem"></textarea>
+      <button type="submit" class="botao-leve botao-salvar chat-enviar">Enviar</button></form><p class="chat-aviso" role="status"></p>`;
+  card.querySelector('.card-corpo').append(raiz);
+  const form = raiz.querySelector('form'); const area = raiz.querySelector('.chat-texto'); const aviso = raiz.querySelector('.chat-aviso');
+  const viva = () => S.conversas.find((x) => x.id === conv.id) || conv;
+  async function enviar() {
+    const texto = area.value.trim(); if (!texto) return;
+    aviso.textContent = '';
+    const r = await fetch(`/api/conversas/${conv.id}/mensagem`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texto }) });
+    if (r.status === 401) return mostrarLogin();
+    if (!r.ok) { aviso.textContent = (await r.json().catch(() => ({}))).erro || 'Não consegui enviar.'; return; }
+    area.value = '';
+    viva().processando = true; viva().trabalhando = true; atualizarChat(viva());
+    await atualizarEstado(); setTimeout(() => pintarHistorico(conv, true), 600);
+  }
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (viva().processando) { await fetch(`/api/conversas/${conv.id}/parar`, { method: 'POST' }); return; }
+    enviar();
+  });
+  area.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!viva().processando) enviar(); } });
+  pintarHistorico(conv, true).then(() => atualizarChat(viva()));
+  setTimeout(() => area.focus(), 80);
+  return card;
+}
+function atualizarChat(conv) {
+  const card = mundo.querySelector('.card-chat'); if (!card || !conv) return;
+  const pill = card.querySelector('[data-status]'); const b = card.querySelector('.chat-enviar');
+  const ocupado = Boolean(conv.processando);
+  pill.className = `pilula${ocupado ? ' trabalhando' : ''}`; pill.textContent = ocupado ? (conv.ultimaAcao || 'pensando…') : 'pronto';
+  b.textContent = ocupado ? 'Parar' : 'Enviar'; b.classList.toggle('parar', ocupado);
+}
+
+// ---------- configurações da OpenAI (API) ----------
+const numeroBR = (n) => Number(n || 0).toLocaleString('pt-BR');
+async function abrirOpenAI() {
+  fecharSeletor();
+  const corpo = $('#openai-corpo');
+  if (!corpo.firstElementChild) {
+    corpo.innerHTML = `
+      <section class="config-cartao agenda-form" id="openai-chave">
+        <div class="config-cabeca"><span class="config-icone azul"><img src="/logos/openai.svg" alt="" width="22" height="22" style="filter:invert(1)"></span><div class="config-titulo"><b>Chave da API</b><span id="openai-chave-estado"></span></div></div>
+        <form id="openai-form-chave" class="agenda-linha">
+          <label>Nova chave<input type="password" name="chave" placeholder="sk-…" autocomplete="off" spellcheck="false"></label>
+          <div class="config-botoes"><button type="submit" class="botao-leve botao-salvar">Testar e guardar</button><button type="button" class="botao-leve" data-openai="apagar-chave" hidden>Remover chave</button></div>
+        </form>
+        <p class="login-erro" id="openai-erro-chave" role="alert"></p>
+        <p class="config-dica">A chave é testada na OpenAI antes de ser guardada neste servidor (arquivo só do servidor) e nunca volta pra esta tela. Crie uma em platform.openai.com/api-keys. Quem define <code>OPENAI_API_KEY</code> no servidor tem prioridade.</p>
+      </section>
+      <form class="config-cartao agenda-form" id="openai-form-cfg">
+        <div class="config-cabeca"><span class="config-icone azul">${ic('engrenagem')}</span><div class="config-titulo"><b>Modelo e limites</b><span>Controle do que cada pedido pode gastar</span></div></div>
+        <label>Modelo<input name="modelo" list="openai-modelos" placeholder="Escolha da lista ou digite" autocomplete="off" spellcheck="false" required></label>
+        <datalist id="openai-modelos"></datalist>
+        <div class="config-botoes"><button type="button" class="botao-leve" data-openai="modelos">Buscar modelos da minha conta</button></div>
+        <div class="agenda-linha">
+          <label>Passos por pedido<input type="number" name="maxPassos" min="1" max="100" step="1" required></label>
+          <label>Limite de saída por resposta (tokens, 0 = sem limite)<input type="number" name="maxSaida" min="0" step="1" required></label>
+          <label>Limite diário (tokens, 0 = sem limite)<input type="number" name="limiteDiario" min="0" step="1" required></label>
+        </div>
+        <label class="agenda-check"><input type="checkbox" name="shell"> Permitir que o agente rode comandos de shell neste servidor (avançado)</label>
+        <p class="config-dica"><b>Atenção:</b> sem isso o agente só lê e escreve arquivos do cérebro, o que é bem mais seguro. Com isso ligado ele pode rodar qualquer comando que o painel pode, inclusive a partir de mensagens do WhatsApp e de tarefas agendadas.</p>
+        <p class="login-erro" id="openai-erro-cfg" role="alert"></p>
+        <div class="config-botoes"><button type="submit" class="botao-leve botao-salvar">Salvar</button></div>
+      </form>
+      <section class="config-cartao"><dl class="config-linhas" id="openai-uso"></dl>
+        <p class="config-dica">Tokens contados pelo que a OpenAI informa a cada resposta. O custo em dinheiro depende do modelo escolhido: confira os preços atuais no painel da OpenAI. Esse motor não tem terminal nem skills do Claude Code: ele conversa pelo painel, pelo WhatsApp e pelos agendamentos.</p>
+      </section>`;
+    $('#openai-form-chave').addEventListener('submit', salvarChaveOpenAI);
+    $('#openai-form-cfg').addEventListener('submit', salvarCfgOpenAI);
+  }
+  $('#folha-openai').hidden = false;
+  await pintarOpenAI(true);
+}
+function fecharOpenAI() { $('#folha-openai').hidden = true; }
+async function pintarOpenAI(preencher) {
+  const d = await api('/api/config/openai');
+  const k = d.chave;
+  $('#openai-chave-estado').textContent = k.configurada ? `Configurada (termina em ${k.final}) · ${k.origem === 'ambiente' ? 'definida no servidor' : 'guardada pelo painel'}` : 'Ainda não configurada';
+  $('#openai-form-chave [data-openai="apagar-chave"]').hidden = k.origem !== 'painel';
+  const f = $('#openai-form-cfg');
+  if (preencher) { f.modelo.value = d.config.modelo; f.maxPassos.value = d.config.maxPassos; f.maxSaida.value = d.config.maxSaida; f.limiteDiario.value = d.config.limiteDiario; f.shell.checked = d.config.shell; }
+  $('#openai-uso').innerHTML = `<div><dt>Hoje</dt><dd>${numeroBR(d.uso.hoje.entrada)} tokens de entrada · ${numeroBR(d.uso.hoje.saida)} de saída</dd></div>
+    <div><dt>Total (90 dias)</dt><dd>${numeroBR(d.uso.total.entrada)} de entrada · ${numeroBR(d.uso.total.saida)} de saída</dd></div>`;
+}
+async function salvarChaveOpenAI(e) {
+  e.preventDefault();
+  const f = e.target; const erro = $('#openai-erro-chave'); erro.textContent = '';
+  const b = f.querySelector('.botao-salvar'); b.disabled = true; b.textContent = 'Testando…';
+  const r = await fetch('/api/config/openai/chave', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chave: f.chave.value }) });
+  b.disabled = false; b.textContent = 'Testar e guardar';
+  if (r.status === 401) return mostrarLogin();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { erro.textContent = j.erro || 'Não consegui guardar a chave.'; return; }
+  f.chave.value = ''; pintarOpenAI(false); buscarModelosOpenAI();
+}
+async function buscarModelosOpenAI() {
+  const erro = $('#openai-erro-cfg'); erro.textContent = '';
+  const r = await fetch('/api/config/openai/modelos');
+  if (r.status === 401) return mostrarLogin();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { erro.textContent = j.erro || 'Não consegui buscar os modelos.'; return; }
+  $('#openai-modelos').innerHTML = j.modelos.map((m) => `<option value="${esc(m)}"></option>`).join('');
+  erro.textContent = j.modelos.length ? `${j.modelos.length} modelos de texto disponíveis na sua conta. Clique no campo Modelo pra escolher.` : 'Nenhum modelo de texto encontrado na sua conta.';
+}
+async function salvarCfgOpenAI(e) {
+  e.preventDefault();
+  const f = e.target; const erro = $('#openai-erro-cfg'); erro.textContent = '';
+  const r = await fetch('/api/config/openai', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ modelo: f.modelo.value, maxPassos: Number(f.maxPassos.value), maxSaida: Number(f.maxSaida.value), limiteDiario: Number(f.limiteDiario.value), shell: f.shell.checked }) });
+  if (r.status === 401) return mostrarLogin();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { erro.textContent = j.erro || 'Não consegui salvar.'; return; }
+  const b = f.querySelector('.botao-salvar'); b.textContent = 'Salvo ✓'; setTimeout(() => { b.textContent = 'Salvar'; }, 1500);
+  pintarOpenAI(false);
+}
+$('#folha-openai')?.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-openai]'); if (!b) return;
+  if (b.dataset.openai === 'modelos') await buscarModelosOpenAI();
+  if (b.dataset.openai === 'apagar-chave' && confirm('Remover a chave guardada pelo painel? Conversas com este motor deixam de funcionar até você colocar outra.')) {
+    await api('/api/config/openai/chave', { method: 'PUT', body: JSON.stringify({ apagar: true }) }); pintarOpenAI(false);
+  }
+});
+
 // ---------- backup do cérebro ----------
 const tamanhoBR = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`);
 const quandoCompleto = (ms) => new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -1190,6 +1326,7 @@ async function pintarConfig() {
         <div class="config-titulo"><b>Motor de IA</b><span>Quem responde nas conversas: Claude Code, Codex (OpenAI) ou Antigravity (Google)</span></div></div>
       <dl class="config-linhas"><div><dt>Conversas novas no painel</dt><dd class="config-escolha">${escolha('padrao')}</dd></div>
         <div><dt>WhatsApp</dt><dd class="config-escolha">${escolha('whatsapp')}</dd></div></dl>
+      <div class="config-botoes"><button class="botao-leve" data-acao="config-openai" type="button">Configurar OpenAI (API)</button></div>
       <p class="config-dica">Vale pras próximas conversas; as abertas seguem no motor em que começaram. No WhatsApp, a troca abre uma conversa nova.</p>
       ${Object.values(mot.motores).map((m) => `<p class="config-dica"><b>${esc(m.nome)}:</b> ${m.instalado ? '' : 'não instalado. '}${esc(m.login)}</p>`).join('')}
     </section>

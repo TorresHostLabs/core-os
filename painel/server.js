@@ -13,6 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { catalogo, PRIMEIROS_TESTES } from './extras.js';
 import { MOTORES, motorDe, disponiveis, comandoTerminal, rodarSemTela, vincularCodex, lerCodex } from './motores.js';
+import { iniciarOpenAI, lerConfigOpenAI, gravarConfigOpenAI, estadoChave, salvarChave, apagarChave, testarChave, listarModelos, usoOpenAI, historicoOpenAI, pararOpenAI } from './openai.js';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,6 +29,7 @@ const CFG = {
   claude: process.env.CLAUDE_BIN || 'claude',
 };
 fs.mkdirSync(CFG.dados, { recursive: true });
+iniciarOpenAI({ dados: CFG.dados, vault: CFG.vault });
 if (!CFG.senha) {
   CFG.senha = crypto.randomBytes(9).toString('base64url');
   console.log(`\n  CORE_OS_PASSWORD não definida. Senha desta execução: ${CFG.senha}\n`);
@@ -536,6 +538,7 @@ app.post('/api/conversas', (req, res) => {
   const conv = criarConversa(MOTORES[req.body?.motor] ? { motor: req.body.motor } : {});
   const cols = Number(req.body?.cols) || 120;
   const rows = Number(req.body?.rows) || 32;
+  if (MOTORES[motorDe(conv)].api) return res.json(conv); // motor de API: sem terminal, a conversa é um chat
   iniciarTerminal(conv, Math.min(cols, 400), Math.min(rows, 200), typeof req.body?.pedido === 'string' ? req.body.pedido : '');
   res.json(conv);
 });
@@ -544,6 +547,7 @@ app.delete('/api/conversas/:id', (req, res) => {
   const conv = conversas.find((c) => c.id === req.params.id);
   if (!conv) return res.status(404).end();
   vivos.get(conv.id)?.proc.kill();
+  pararOpenAI(conv.id);
   conv.arquivada = true;
   salvarConversas();
   res.json({ ok: true });
@@ -610,6 +614,7 @@ function registroDe(c) {
   const m = motorDe(c);
   if (m === 'claude') return lerRegistro(path.join(PROJETOS, `${c.id}.jsonl`)) || {};
   if (m === 'codex') return lerCodex(c.sessaoMotor).reg || {};
+  if (MOTORES[m].api) return { ultimaAcao: c.ultimaAcao, terminou: !c.processando, mtime: c.ultimaAtividade };
   return {};
 }
 
@@ -639,6 +644,7 @@ app.get('/api/conversas/:id/historico', (req, res) => {
   if (!/^[0-9a-f-]{36}$/.test(req.params.id)) return res.status(400).end();
   const conv = conversas.find((c) => c.id === req.params.id);
   if (conv && motorDe(conv) === 'codex') return res.json(lerCodex(conv.sessaoMotor).itens.slice(-300));
+  if (conv && MOTORES[motorDe(conv)].api) return res.json(historicoOpenAI(conv.id).slice(-300));
   if (conv && motorDe(conv) !== 'claude') return res.json((conv.historico || []).slice(-300));
   let linhas = [];
   try { linhas = fs.readFileSync(path.join(PROJETOS, `${req.params.id}.jsonl`), 'utf8').split('\n'); } catch { return res.json([]); }
@@ -1054,6 +1060,43 @@ app.get('/api/backup/baixar', (req, res) => {
   res.on('close', () => { proc.kill('SIGTERM'); fim(); }); // cliente desistiu: para o tar
 });
 
+// ---------- motor OpenAI (API): chat no painel e configurações ----------
+const PROMPT_PAINEL = 'Esta conversa acontece no painel web do Core OS: o dono lê sua resposta na tela, então pode usar markdown simples (listas, negrito) quando ajudar.';
+app.post('/api/conversas/:id/mensagem', (req, res) => {
+  const conv = conversas.find((c) => c.id === req.params.id && !c.arquivada);
+  if (!conv) return res.status(404).json({ erro: 'Conversa não encontrada.' });
+  if (!MOTORES[motorDe(conv)].api) return res.status(400).json({ erro: 'Esta conversa usa um terminal; digite nele.' });
+  const texto = String(req.body?.texto ?? '').trim();
+  if (!texto || texto.length > 20000) return res.status(400).json({ erro: 'Mensagem vazia ou longa demais (máximo 20 mil caracteres).' });
+  if (conv.processando) return res.status(409).json({ erro: 'Ainda estou respondendo. Espere terminar ou clique em Parar.' });
+  conv.processando = true; conv.ultimaAtividade = Date.now(); salvarConversas();
+  res.status(202).json({ ok: true });
+  rodarClaude(conv, texto, undefined, PROMPT_PAINEL).catch((e) => console.error('[openai]', e))
+    .finally(() => { conv.processando = false; conv.ultimaAtividade = Date.now(); salvarConversas(); });
+});
+app.post('/api/conversas/:id/parar', (req, res) => {
+  const conv = conversas.find((c) => c.id === req.params.id);
+  if (!conv) return res.status(404).json({ erro: 'Conversa não encontrada.' });
+  res.json({ ok: pararOpenAI(conv.id) });
+});
+const resumoOpenAI = () => ({ config: lerConfigOpenAI(), chave: estadoChave(), uso: usoOpenAI() });
+app.get('/api/config/openai', (req, res) => res.json(resumoOpenAI()));
+app.put('/api/config/openai', (req, res) => {
+  try { gravarConfigOpenAI(req.body || {}); } catch (e) { return res.status(400).json({ erro: e.message }); }
+  res.json(resumoOpenAI());
+});
+app.put('/api/config/openai/chave', async (req, res) => {
+  if (req.body?.apagar) { apagarChave(); return res.json(resumoOpenAI()); }
+  const chave = String(req.body?.chave ?? '').trim();
+  if (!/^sk-[A-Za-z0-9_\-]{16,}$/.test(chave)) return res.status(400).json({ erro: 'Isso não parece uma chave da OpenAI (começa com sk-).' });
+  try { await testarChave(chave); } catch (e) { return res.status(400).json({ erro: `A OpenAI não aceitou essa chave: ${e.message}` }); }
+  salvarChave(chave); // só guarda depois de a OpenAI aceitar
+  res.json(resumoOpenAI());
+});
+app.get('/api/config/openai/modelos', async (req, res) => {
+  try { res.json({ modelos: await listarModelos() }); } catch (e) { res.status(502).json({ erro: e.message }); }
+});
+
 // ---------- estáticos ----------
 const vendor = (p) => path.join(AQUI, 'node_modules', p);
 app.use('/vendor/xterm', express.static(vendor('@xterm/xterm')));
@@ -1070,7 +1113,7 @@ servidor.on('upgrade', (req, socket, head) => {
   const conv = conversas.find((c) => c.id === url.searchParams.get('conversa'));
   let origemOk = !req.headers.origin;
   try { origemOk = origemOk || new URL(req.headers.origin).host === req.headers.host; } catch { origemOk = false; }
-  if (url.pathname !== '/ws' || !logado(req) || !conv || !origemOk) { socket.destroy(); return; }
+  if (url.pathname !== '/ws' || !logado(req) || !conv || !origemOk || MOTORES[motorDe(conv)].api) { socket.destroy(); return; }
   wss.handleUpgrade(req, socket, head, (ws) => {
     const cols = Number(url.searchParams.get('cols')) || 120;
     const rows = Number(url.searchParams.get('rows')) || 32;
