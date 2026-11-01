@@ -51,6 +51,7 @@
       <button data-acao="nova-conversa" data-dica="Nova conversa"></button>
       <button data-acao="conteudos" data-dica="Conteúdos"></button>
       <button data-acao="agenda" data-dica="Agendamentos"></button>
+      <button data-acao="backup" data-dica="Backup"></button>
       <span class="dock-separador"></span>
       <button data-acao="centralizar" data-dica="Centralizar"></button>
       <button data-acao="tema" data-dica="Tema"></button>
@@ -92,6 +93,17 @@
           <button class="icone-botao" data-acao="fechar-agenda" title="Fechar"></button>
         </header>
         <div id="agenda-corpo" class="config-corpo"></div>
+      </div>
+    </section>
+
+    <section id="folha-backup" class="folha" hidden>
+      <div class="folha-fundo" data-acao="fechar-backup"></div>
+      <div class="folha-corpo folha-estreita">
+        <header class="folha-topo">
+          <div><h2>Backup</h2><p>Uma cópia do seu cérebro, pra você nunca perder as notas.</p></div>
+          <button class="icone-botao" data-acao="fechar-backup" title="Fechar"></button>
+        </header>
+        <div id="backup-corpo" class="config-corpo"></div>
       </div>
     </section>
 

@@ -13,6 +13,7 @@ const P = {
   sair: '<path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M10 16l4-4-4-4M14 12H4"/>',
   fechar: '<path d="M6 6l12 12M18 6L6 18"/>',
   recarregar: '<path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/>',
+  backup: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
   relogio: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   raio: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
   seta: '<path d="M9 6l6 6-6 6"/>',
@@ -772,7 +773,7 @@ async function abrir(caminho) {
 // ---------- dock e ações ----------
 const aberta = (q) => (q === 'arvore' ? !$('#arvore').classList.contains('fechado') : false);
 function pintarDock() {
-  const icones = { arvore: 'arvore', grafo: 'grafo', config: 'engrenagem', 'nova-conversa': 'conversaNova', conteudos: 'grade', agenda: 'relogio', centralizar: 'mira', sair: 'sair',
+  const icones = { arvore: 'arvore', grafo: 'grafo', config: 'engrenagem', 'nova-conversa': 'conversaNova', conteudos: 'grade', agenda: 'relogio', backup: 'backup', centralizar: 'mira', sair: 'sair',
     tema: document.documentElement.dataset.tema === 'escuro' ? 'sol' : 'lua' };
   document.querySelectorAll('#dock button').forEach((b) => { b.innerHTML = ic(icones[b.dataset.acao]); });
   $('#dock [data-acao="arvore"]')?.classList.toggle('ligado', !$('#arvore')?.classList.contains('fechado'));
@@ -780,6 +781,7 @@ function pintarDock() {
   $('#dock [data-acao="grafo"]')?.classList.toggle('ligado', !$('#grafo')?.hidden);
   $('#dock [data-acao="config"]')?.classList.toggle('ligado', !$('#folha-config')?.hidden);
   $('#dock [data-acao="agenda"]')?.classList.toggle('ligado', !$('#folha-agenda')?.hidden);
+  $('#dock [data-acao="backup"]')?.classList.toggle('ligado', !$('#folha-backup')?.hidden);
 }
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-acao]');
@@ -803,6 +805,8 @@ document.addEventListener('click', async (e) => {
   if (a === 'grafo') (Grafo.aberto ? Grafo.fechar() : Grafo.abrir());
   if (a === 'config') abrirConfig();
   if (a === 'agenda') abrirAgenda();
+  if (a === 'backup') abrirBackup();
+  if (a === 'fechar-backup') fecharBackup();
   if (a === 'fechar-agenda') fecharAgenda();
   if (a === 'fechar-config') fecharConfig();
   if (a === 'whats-conectar') conectarWhats(b);
@@ -822,6 +826,7 @@ document.addEventListener('keydown', (e) => {
   else if (!$('#folha-conteudos').hidden) fecharConteudos();
   else if (!$('#folha-config').hidden) fecharConfig();
   else if (!$('#folha-agenda').hidden) fecharAgenda();
+  else if (!$('#folha-backup').hidden) fecharBackup();
   else if (Grafo.aberto) Grafo.fechar();
 });
 
@@ -1081,6 +1086,85 @@ $('#folha-agenda')?.addEventListener('click', async (e) => {
   if (acao === 'executar' && ag) { b.disabled = true; await api(`/api/agendamentos/${id}/executar`, { method: 'POST' }); }
   if (acao === 'excluir' && ag && confirm(`Excluir a tarefa "${ag.nome}"? As conversas que ela já gerou continuam no painel.`)) await api(`/api/agendamentos/${id}`, { method: 'DELETE' });
   pintarAgenda();
+});
+
+// ---------- backup do cérebro ----------
+const tamanhoBR = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`);
+const quandoCompleto = (ms) => new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+async function abrirBackup() {
+  const corpo = $('#backup-corpo');
+  if (!corpo.firstElementChild) {
+    corpo.innerHTML = `
+      <form id="backup-cfg" class="config-cartao agenda-form">
+        <div class="config-cabeca"><span class="config-icone azul">${ic('backup')}</span><div class="config-titulo"><b>Backup automático</b><span>Todo dia, no horário de Brasília, guardado neste servidor</span></div></div>
+        <label class="agenda-check"><input type="checkbox" name="auto"> Ligar o backup automático</label>
+        <div class="agenda-linha">
+          <label>Horário<input type="time" name="hora" required></label>
+          <label>Guardar os últimos<input type="number" name="manter" min="1" max="60" step="1" required></label>
+        </div>
+        <label class="agenda-check"><input type="checkbox" name="midia"> Incluir imagens e vídeos (o arquivo fica bem maior)</label>
+        <p class="login-erro" role="alert"></p>
+        <div class="config-botoes"><button type="submit" class="botao-leve botao-salvar">Salvar</button></div>
+      </form>
+      <div id="backup-lista" class="agenda-lista"></div>`;
+    $('#backup-cfg').addEventListener('submit', salvarConfigBackup);
+  }
+  $('#folha-backup').hidden = false; pintarDock();
+  await pintarBackup(true);
+  clearInterval(abrirBackup.t);
+  abrirBackup.t = setInterval(() => { if ($('#folha-backup').hidden) clearInterval(abrirBackup.t); else pintarBackup(false).catch(() => {}); }, 4000);
+}
+function fecharBackup() { $('#folha-backup').hidden = true; clearInterval(abrirBackup.t); pintarDock(); }
+async function salvarConfigBackup(e) {
+  e.preventDefault();
+  const f = e.target; const erro = f.querySelector('.login-erro'); erro.textContent = '';
+  const r = await fetch('/api/backup/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ auto: f.auto.checked, hora: f.hora.value, manter: Number(f.manter.value), midia: f.midia.checked }) });
+  if (r.status === 401) return mostrarLogin();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { erro.textContent = j.erro || 'Não consegui salvar.'; return; }
+  erro.textContent = ''; const b = f.querySelector('.botao-salvar'); b.textContent = 'Salvo ✓'; setTimeout(() => { b.textContent = 'Salvar'; }, 1500);
+  pintarBackup(false);
+}
+async function pintarBackup(preencherForm) {
+  const d = await api('/api/backup');
+  const f = $('#backup-cfg');
+  if (f && preencherForm) { f.auto.checked = d.config.auto; f.hora.value = d.config.hora; f.manter.value = d.config.manter; f.midia.checked = d.config.midia; }
+  const u = d.ultima;
+  const raiz = $('#backup-lista');
+  raiz.innerHTML = `
+    <article class="config-cartao">
+      <dl class="config-linhas">
+        <div><dt>Próximo automático</dt><dd>${d.proxima ? esc(quandoCompleto(d.proxima)) : 'desligado'}</dd></div>
+        <div><dt>Último backup</dt><dd>${d.rodando ? 'rodando agora…' : u ? `${esc(quandoCompleto(u.quando))} · ${u.ok ? `ok (${esc(tamanhoBR(u.tamanho))})` : '<span style="color:#ff3b30">falhou</span>'}` : 'nenhum ainda'}</dd></div>
+        ${d.livre != null ? `<div><dt>Espaço livre no servidor</dt><dd>${esc(tamanhoBR(d.livre))}</dd></div>` : ''}
+      </dl>
+      ${u && !u.ok ? '<p class="agenda-resumo" id="backup-erro"></p>' : ''}
+      <div class="config-botoes">
+        <a class="botao-leve botao-salvar" href="/api/backup/baixar?midia=${d.config.midia ? 1 : 0}" download>Baixar agora</a>
+        <button class="botao-leve" type="button" data-backup="criar" ${d.rodando ? 'disabled' : ''}>Criar backup no servidor</button>
+      </div>
+      <p class="config-dica">"Baixar agora" gera o arquivo na hora e manda direto pro seu computador, sem ocupar espaço aqui.</p>
+    </article>
+    <article class="config-cartao">
+      <div class="config-titulo"><b>Backups guardados no servidor</b><span>${d.backups.length ? `${d.backups.length} arquivo${d.backups.length > 1 ? 's' : ''}` : 'nenhum'}</span></div>
+      ${d.backups.map((b) => `<div class="backup-item" data-nome="${esc(b.nome)}"><div><b>${esc(quandoCompleto(b.quando))}</b><span>${esc(tamanhoBR(b.tamanho))}</span></div>
+        <a class="botao-leve" href="/api/backup/arquivo?nome=${encodeURIComponent(b.nome)}" download>Baixar</a>
+        <button class="botao-leve" type="button" data-backup="excluir">Excluir</button></div>`).join('')}
+      <p class="config-dica">Estes backups ficam no mesmo disco do cérebro: se o servidor se perder, eles se perdem junto. <b>Baixe de vez em quando uma cópia pro seu computador.</b></p>
+      <p class="config-dica">Pra restaurar: <code>mkdir restaurado &amp;&amp; tar -xzf cerebro-AAAAMMDD-HHMMSS.tar.gz -C restaurado</code>, confira o conteúdo e copie o que precisar de volta.</p>
+    </article>`;
+  if (u && !u.ok) $('#backup-erro').textContent = u.erro || '';
+}
+$('#folha-backup')?.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-backup]'); if (!b) return;
+  if (b.dataset.backup === 'criar') { b.disabled = true; await api('/api/backup/criar', { method: 'POST' }); }
+  if (b.dataset.backup === 'excluir') {
+    const nome = b.closest('.backup-item').dataset.nome;
+    if (!confirm('Excluir este backup do servidor? Não dá pra desfazer.')) return;
+    await api(`/api/backup/arquivo?nome=${encodeURIComponent(nome)}`, { method: 'DELETE' });
+  }
+  pintarBackup(false);
 });
 
 function fecharConfig() { $('#folha-config').hidden = true; qrAtual = null; qrVencido = false; pintarDock(); }

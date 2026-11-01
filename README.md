@@ -28,6 +28,7 @@ Ou à mão: `git clone https://github.com/TorresHostLabs/core-os /root/core-os &
 - Cada conversa do painel é um `claude --session-id <id>` real num terminal (node-pty), na pasta do cérebro, com prompt de sistema apontando a nota `sessoes/<id>.md`.
 - O painel lê o registro do Claude Code (`~/.claude/projects/<pasta>/<id>.jsonl` e `<id>/subagents/*.meta.json`) pra mostrar a última ação e os subagentes.
 - Agendamentos (dock › relógio): tarefas com horário (todo dia, dias da semana ou a cada N tempo, fuso de Brasília) rodam sozinhas com `claude -p`, uma por vez, e viram conversas `Agendado · nome` no painel; opcionalmente o resultado vai pro WhatsApp. Ficam em `dados/agendamentos.json`. Execução atrasada em mais de 2h (painel fora do ar) é pulada.
+- Backup (dock › disco): `.tar.gz` da pasta do cérebro (sem `node_modules` e `.trash`). "Baixar agora" gera em streaming direto pro seu computador; "Criar backup no servidor" e o automático diário guardam em `dados/backups/` e mantêm só os N mais recentes. Restaurar é manual (`tar -xzf`).
 - Arquivo de mídia novo em `conteudo/` vira card da conversa que estava ativa.
 - WhatsApp: Evolution (webhook) → n8n (só conversas individuais) → painel confere quem pode dar ordens (`dados/whatsapp-acesso.json`) → `POST /api/ponte/whatsapp` com token → `claude -p` → resposta pela Evolution.
 - Senhas em `/opt/core-os/.env` (600/640). Painel e n8n atrás do Caddy; HTTPS automático com domínio.

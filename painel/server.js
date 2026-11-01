@@ -946,6 +946,114 @@ app.post('/api/agendamentos/:id/executar', (req, res) => {
   res.status(202).json({ ok: true });
 });
 
+// ---------- backup do cérebro ----------
+// .tar.gz da pasta do cérebro (tar do sistema). Manual (download em streaming ou guardado em dados/backups)
+// e automático diário (fuso de Brasília) com retenção dos N mais recentes. Restaurar é manual (comando na tela).
+const PASTA_BACKUP = path.join(CFG.dados, 'backups'); fs.mkdirSync(PASTA_BACKUP, { recursive: true });
+const NOME_BACKUP = /^cerebro-\d{8}-\d{6}\.tar\.gz$/;
+const MIDIAS_TAR = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'mp4', 'mov', 'webm', 'm4v'];
+let backupCfg = { auto: false, hora: '03:00', manter: 7, midia: true, ultima: null, proxima: null, ...ler('backup.json', {}) };
+const salvarBackupCfg = () => gravar('backup.json', backupCfg);
+let backupRodando = false; let baixandoBackup = false;
+
+function selo(ms = Date.now()) {
+  const q = partesNoFuso(ms); const z = (n) => String(n).padStart(2, '0');
+  return `${q.ano}${z(q.mes)}${z(q.dia)}-${z(q.hora)}${z(q.min)}${z(new Date(ms).getUTCSeconds())}`;
+}
+function argsTar(saida, midia) {
+  const ex = ['--exclude=node_modules', '--exclude=.trash', '--exclude=*.enviando', ...(midia ? [] : MIDIAS_TAR.map((e) => `--exclude=*.${e}`))];
+  return ['-czf', saida, ...ex, '-C', path.dirname(CFG.vault), path.basename(CFG.vault)];
+}
+function espacoLivre() { try { const f = fs.statfsSync(PASTA_BACKUP); return f.bavail * f.bsize; } catch { return Infinity; } }
+function listarBackups() {
+  return fs.readdirSync(PASTA_BACKUP).filter((n) => NOME_BACKUP.test(n)).sort().reverse().map((nome) => {
+    const st = fs.statSync(path.join(PASTA_BACKUP, nome)); return { nome, tamanho: st.size, quando: st.mtimeMs };
+  });
+}
+function podarBackups() {
+  for (const b of listarBackups().slice(Math.max(1, backupCfg.manter))) { try { fs.unlinkSync(path.join(PASTA_BACKUP, b.nome)); } catch { /* */ } }
+}
+function criarBackup(midia) {
+  if (espacoLivre() < 500 * 1024 * 1024) return Promise.reject(new Error('Pouco espaço em disco (menos de 500 MB livres).'));
+  const nome = `cerebro-${selo()}.tar.gz`; const destino = path.join(PASTA_BACKUP, nome); const tmp = `${destino}.parcial`;
+  return new Promise((ok, falha) => {
+    const proc = spawn('tar', argsTar(tmp, midia), { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = ''; proc.stderr.on('data', (d) => { err += d; });
+    proc.on('error', (e) => falha(new Error(`Não consegui rodar o tar: ${e.message}`)));
+    proc.on('close', (code) => {
+      // código 1 do tar = "um arquivo mudou durante a leitura": o backup serve
+      if (code !== 0 && code !== 1) { try { fs.unlinkSync(tmp); } catch { /* */ } return falha(new Error(err.trim().split('\n').slice(-2).join(' ') || `tar saiu com código ${code}`)); }
+      fs.renameSync(tmp, destino); ok({ nome, tamanho: fs.statSync(destino).size });
+    });
+  });
+}
+async function rodarBackup(origem) {
+  if (backupRodando) return false;
+  backupRodando = true;
+  try {
+    const r = await criarBackup(backupCfg.midia);
+    backupCfg.ultima = { quando: Date.now(), ok: true, arquivo: r.nome, tamanho: r.tamanho, origem };
+    podarBackups();
+  } catch (e) { backupCfg.ultima = { quando: Date.now(), ok: false, erro: String(e.message || e).slice(0, 300), origem }; }
+  finally { backupRodando = false; salvarBackupCfg(); }
+  return true;
+}
+function tickBackup() {
+  if (!backupCfg.auto) return;
+  const agora = Date.now();
+  if (!backupCfg.proxima) { backupCfg.proxima = proximaExecucao({ tipo: 'diaria', hora: backupCfg.hora }, agora); salvarBackupCfg(); return; }
+  if (backupCfg.proxima <= agora) {
+    backupCfg.proxima = proximaExecucao({ tipo: 'diaria', hora: backupCfg.hora }, agora); salvarBackupCfg();
+    rodarBackup('automatico'); // backup atrasado (painel fora do ar) roda mesmo assim
+  }
+}
+setInterval(tickBackup, 60_000);
+setTimeout(tickBackup, 10_000);
+
+app.get('/api/backup', (req, res) => {
+  const { auto, hora, manter, midia, ultima, proxima } = backupCfg;
+  res.json({ config: { auto, hora, manter, midia }, ultima, proxima: auto ? proxima : null, rodando: backupRodando, backups: listarBackups(), livre: espacoLivre() === Infinity ? null : espacoLivre() });
+});
+app.put('/api/backup/config', (req, res) => {
+  const b = req.body || {};
+  const hora = String(b.hora ?? backupCfg.hora); const manter = Number(b.manter ?? backupCfg.manter);
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return res.status(400).json({ erro: 'Horário inválido.' });
+  if (!Number.isInteger(manter) || manter < 1 || manter > 60) return res.status(400).json({ erro: 'Guardar de 1 a 60 backups.' });
+  const mudou = hora !== backupCfg.hora || (b.auto === true && !backupCfg.auto);
+  Object.assign(backupCfg, { auto: Boolean(b.auto ?? backupCfg.auto), hora, manter, midia: Boolean(b.midia ?? backupCfg.midia) });
+  if (!backupCfg.auto) backupCfg.proxima = null; else if (mudou || !backupCfg.proxima) backupCfg.proxima = proximaExecucao({ tipo: 'diaria', hora }, Date.now());
+  podarBackups(); salvarBackupCfg();
+  res.json({ ok: true });
+});
+app.post('/api/backup/criar', (req, res) => {
+  if (backupRodando) return res.status(409).json({ erro: 'Já tem um backup rodando.' });
+  rodarBackup('manual');
+  res.status(202).json({ ok: true });
+});
+const arquivoBackup = (nome) => (NOME_BACKUP.test(String(nome)) && fs.existsSync(path.join(PASTA_BACKUP, nome)) ? path.join(PASTA_BACKUP, nome) : null);
+app.get('/api/backup/arquivo', (req, res) => {
+  const f = arquivoBackup(req.query.nome);
+  if (!f) return res.status(404).json({ erro: 'Backup não encontrado.' });
+  res.download(f, path.basename(f));
+});
+app.delete('/api/backup/arquivo', (req, res) => {
+  const f = arquivoBackup(req.query.nome);
+  if (!f) return res.status(404).json({ erro: 'Backup não encontrado.' });
+  fs.unlinkSync(f); res.json({ ok: true });
+});
+// download direto, sem guardar no servidor (o tar escreve na resposta)
+app.get('/api/backup/baixar', (req, res) => {
+  if (baixandoBackup) return res.status(409).json({ erro: 'Já tem um download de backup em andamento.' });
+  baixandoBackup = true;
+  const proc = spawn('tar', argsTar('-', req.query.midia !== '0'), { stdio: ['ignore', 'pipe', 'ignore'] });
+  res.set({ 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="cerebro-${selo()}.tar.gz"`, 'Cache-Control': 'no-store' });
+  proc.stdout.pipe(res);
+  const fim = () => { baixandoBackup = false; };
+  proc.on('error', () => { fim(); if (!res.headersSent) res.status(500).end(); else res.destroy(); });
+  proc.on('close', fim);
+  res.on('close', () => { proc.kill('SIGTERM'); fim(); }); // cliente desistiu: para o tar
+});
+
 // ---------- estáticos ----------
 const vendor = (p) => path.join(AQUI, 'node_modules', p);
 app.use('/vendor/xterm', express.static(vendor('@xterm/xterm')));

@@ -522,3 +522,11 @@ img.selo-motor { width: 14px; height: 14px; padding: 0; border: 0; border-radius
 .agenda-form[data-tipo="semanal"] .so-intervalo, .agenda-form[data-tipo="intervalo"] .so-horario, .agenda-form[data-tipo="intervalo"] .so-semanal { display: none; }
 .agenda-form[data-tipo="semanal"] .so-semanal { display: flex; }
 .botao-leve.botao-salvar:hover { background: #0a84ff; color: #fff; }
+
+/* backup */
+a.botao-leve { text-decoration: none; color: inherit; }
+a.botao-leve.botao-salvar { color: #fff; }
+.backup-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 0.5px solid var(--linha); }
+.backup-item > div { flex: 1; min-width: 0; }
+.backup-item b { display: block; font-size: 13px; }
+.backup-item span { font-size: 12px; color: var(--texto-2); }
