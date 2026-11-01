@@ -13,6 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { catalogo, PRIMEIROS_TESTES } from './extras.js';
 import { MOTORES, motorDe, disponiveis, comandoTerminal, rodarSemTela, vincularCodex, lerCodex } from './motores.js';
+import { iniciarOpenAI, lerConfigOpenAI, gravarConfigOpenAI, estadoChave, salvarChave, apagarChave, testarChave, listarModelos, usoOpenAI, historicoOpenAI, pararOpenAI } from './openai.js';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,6 +29,7 @@ const CFG = {
   claude: process.env.CLAUDE_BIN || 'claude',
 };
 fs.mkdirSync(CFG.dados, { recursive: true });
+iniciarOpenAI({ dados: CFG.dados, vault: CFG.vault });
 if (!CFG.senha) {
   CFG.senha = crypto.randomBytes(9).toString('base64url');
   console.log(`\n  CORE_OS_PASSWORD não definida. Senha desta execução: ${CFG.senha}\n`);
@@ -50,13 +52,32 @@ const ler = (n, padrao) => { try { return JSON.parse(fs.readFileSync(arq(n), 'ut
 const gravar = (n, v) => fs.writeFileSync(arq(n), JSON.stringify(v, null, 2));
 
 // ---------- autenticação ----------
-const sessoesLogin = new Set(ler('logins.json', []));
-const falhas = new Map(); // ip -> [timestamps]
+const VALIDADE_LOGIN = 30 * 24 * 3600 * 1000;
 const hash = (s) => crypto.createHash('sha256').update(String(s)).digest();
-function cookies(req) {
-  return Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((p) => p[0]));
+const hashHex = (s) => hash(s).toString('hex');
+// guarda só o hash do token (nunca o token) e a data de validade; aceita o formato antigo (lista de tokens)
+const sessoesLogin = new Map();
+for (const item of ler('logins.json', [])) {
+  if (typeof item === 'string') sessoesLogin.set(hashHex(item), Date.now() + VALIDADE_LOGIN);
+  else if (item?.h && item.ate > Date.now()) sessoesLogin.set(item.h, item.ate);
 }
-const logado = (req) => sessoesLogin.has(cookies(req).coreos || '');
+const salvarLogins = () => gravar('logins.json', [...sessoesLogin].map(([h, ate]) => ({ h, ate })).slice(-50));
+const falhas = new Map(); // ip -> [timestamps]
+setInterval(() => { // não deixa o mapa de falhas crescer sem fim
+  const agora = Date.now();
+  for (const [ip, ts] of falhas) if (!ts.some((t) => agora - t < 60_000)) falhas.delete(ip);
+  for (const [h, ate] of sessoesLogin) if (ate < agora) sessoesLogin.delete(h);
+}, 600_000).unref();
+function cookies(req) {
+  return Object.fromEntries((req.headers.cookie || '').split(';').map((c) => {
+    const i = c.indexOf('=');
+    return i < 0 ? [] : [c.slice(0, i).trim(), c.slice(i + 1).trim()];
+  }).filter((p) => p[0]));
+}
+const logado = (req) => {
+  const ate = sessoesLogin.get(hashHex(cookies(req).coreos || ''));
+  return Boolean(ate && ate > Date.now());
+};
 
 const app = express();
 app.disable('x-powered-by');
@@ -64,6 +85,8 @@ app.set('trust proxy', 'loopback');
 app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
   res.set({ 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
+  // arquivos do cérebro são conteúdo não confiável: sem script mesmo se abertos direto (SVG/HTML)
+  if (req.path === '/api/arquivo' || req.path === '/api/capa') res.set('Content-Security-Policy', "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'");
   next();
 });
 
@@ -77,16 +100,16 @@ app.post('/api/login', (req, res) => {
     return res.status(401).json({ erro: 'Senha errada.' });
   }
   const token = crypto.randomBytes(32).toString('hex');
-  sessoesLogin.add(token);
-  gravar('logins.json', [...sessoesLogin].slice(-50));
+  sessoesLogin.set(hashHex(token), Date.now() + VALIDADE_LOGIN);
+  salvarLogins();
   const seguro = req.secure ? '; Secure' : '';
   res.set('Set-Cookie', `coreos=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${seguro}`);
   res.json({ ok: true });
 });
 
 app.post('/api/logout', (req, res) => {
-  sessoesLogin.delete(cookies(req).coreos || '');
-  gravar('logins.json', [...sessoesLogin]);
+  sessoesLogin.delete(hashHex(cookies(req).coreos || ''));
+  salvarLogins();
   res.set('Set-Cookie', 'coreos=; Path=/; Max-Age=0').json({ ok: true });
 });
 
@@ -123,11 +146,94 @@ function arvore(dir, rel = '', profundidade = 0) {
 
 app.get('/api/arvore', (req, res) => res.json(arvore(CFG.vault)));
 
+// ---------- busca nas notas ----------
+// minúsculas e sem acento, mantendo o mesmo tamanho do texto original (pra marcar o trecho achado)
+const plano = (t) => Array.from(String(t), (c) => {
+  const n = c.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  if (n.length === 1) return n;
+  const l = c.toLowerCase();
+  return l.length === c.length ? l : c;
+}).join('');
+const BUSCAVEL = /\.(md|txt)$/i;
+
+function buscar(consulta) {
+  const q = plano(consulta.trim());
+  const resultados = [];
+  let lidos = 0;
+  (function andar(lista) {
+    for (const n of lista) {
+      if (resultados.length >= 60 || lidos > 5000) return;
+      if (n.tipo === 'pasta') { andar(n.filhos); continue; }
+      if (!BUSCAVEL.test(n.nome)) continue;
+      let texto = '';
+      try {
+        const abs = path.join(CFG.vault, n.caminho);
+        if (fs.statSync(abs).size > 1_000_000) continue;
+        texto = fs.readFileSync(abs, 'utf8'); lidos++;
+      } catch { continue; }
+      const noNome = plano(n.nome).includes(q);
+      const trechos = [];
+      const linhas = texto.split('\n');
+      for (let i = 0; i < linhas.length && trechos.length < 3; i++) {
+        const pos = plano(linhas[i]).indexOf(q);
+        if (pos < 0) continue;
+        const ini = Math.max(0, pos - 50);
+        const corte = linhas[i].slice(ini, pos + q.length + 90);
+        trechos.push({ linha: i + 1, texto: (ini > 0 ? '…' : '') + corte, de: pos - ini + (ini > 0 ? 1 : 0), ate: pos - ini + (ini > 0 ? 1 : 0) + q.length });
+      }
+      if (noNome || trechos.length) resultados.push({ caminho: n.caminho, nome: n.nome, noNome, trechos });
+    }
+  })(arvore(CFG.vault));
+  // nome que bate vem primeiro
+  return resultados.sort((a, b) => Number(b.noNome) - Number(a.noNome));
+}
+
+app.get('/api/busca', (req, res) => {
+  const q = String(req.query.q || '');
+  if (q.trim().length < 2) return res.json([]);
+  if (q.length > 100) return res.status(400).json({ erro: 'Busca longa demais.' });
+  res.json(buscar(q));
+});
+
 app.get('/api/arquivo', (req, res) => {
   const real = dentroDoVault(req.query.caminho);
   if (!real || !fs.statSync(real).isFile()) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
   if (req.query.baixar) return res.download(real, path.basename(real), { dotfiles: 'allow' });
   res.sendFile(real, { dotfiles: 'allow', headers: { 'Cache-Control': 'no-cache' } });
+});
+
+// ---------- editor de notas ----------
+// só edita .md/.txt que já existem dentro do cérebro; `versao` (mtime) evita sobrescrever mudança feita por outra conversa
+const EDITAVEL = /\.(md|txt)$/i;
+const LIMITE_NOTA = 900_000;
+function notaEditavel(rel) {
+  const real = dentroDoVault(rel);
+  if (!real || !EDITAVEL.test(real)) return null;
+  const st = fs.statSync(real);
+  return st.isFile() ? { real, st } : null;
+}
+app.get('/api/nota', (req, res) => {
+  const n = notaEditavel(req.query.caminho);
+  if (!n) return res.status(404).json({ erro: 'Nota não encontrada (só .md e .txt podem ser editados).' });
+  if (n.st.size > LIMITE_NOTA) return res.status(413).json({ erro: 'Nota grande demais para o editor.' });
+  res.json({ conteudo: fs.readFileSync(n.real, 'utf8'), versao: n.st.mtimeMs });
+});
+app.put('/api/nota', (req, res) => {
+  const { caminho, conteudo, versao, forcar } = req.body || {};
+  const n = notaEditavel(caminho);
+  if (!n) return res.status(404).json({ erro: 'Nota não encontrada (só .md e .txt podem ser editados).' });
+  if (typeof conteudo !== 'string') return res.status(400).json({ erro: 'Conteúdo inválido.' });
+  if (Buffer.byteLength(conteudo) > LIMITE_NOTA) return res.status(413).json({ erro: 'Nota grande demais.' });
+  if (!forcar && n.st.mtimeMs !== versao) return res.status(409).json({ erro: 'A nota mudou no servidor desde que você abriu.' });
+  const tmp = `${n.real}.${process.pid}.salvando`;
+  try {
+    fs.writeFileSync(tmp, conteudo, { mode: n.st.mode & 0o777 });
+    fs.renameSync(tmp, n.real);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch { /* */ }
+    return res.status(500).json({ erro: 'Não consegui salvar.' });
+  }
+  res.json({ ok: true, versao: fs.statSync(n.real).mtimeMs });
 });
 
 // ---------- conteúdos (pastas com capa, download e envio) ----------
@@ -215,7 +321,11 @@ app.post('/api/enviar', (req, res) => {
   const ext = path.extname(nome); const raiz = nome.slice(0, nome.length - ext.length);
   for (let i = 2; fs.existsSync(path.join(pasta, nome)); i++) nome = `${raiz}-${i}${ext}`;
   const destino = path.join(pasta, nome); const tmp = `${destino}.enviando`;
+  const LIMITE = Number(process.env.CORE_OS_MAX_UPLOAD_MB || 500) * 1024 * 1024;
+  if (Number(req.headers['content-length'] || 0) > LIMITE) return res.status(413).json({ erro: 'Arquivo grande demais.' });
   const out = fs.createWriteStream(tmp);
+  let recebido = 0;
+  req.on('data', (c) => { recebido += c.length; if (recebido > LIMITE) { req.unpipe(out); out.destroy(); try { fs.unlinkSync(tmp); } catch { /* */ } if (!res.headersSent) res.status(413).json({ erro: 'Arquivo grande demais.' }); } });
   req.pipe(out);
   out.on('finish', () => { fs.renameSync(tmp, destino); enviados.add(path.relative(CFG.vault, destino).split(path.sep).join('/')); res.json({ caminho: path.relative(CFG.vault, destino).split(path.sep).join('/') }); });
   const erro = () => { try { fs.unlinkSync(tmp); } catch { /* */ } if (!res.headersSent) res.status(500).json({ erro: 'Falhou no meio do envio.' }); };
@@ -242,7 +352,7 @@ function montarGrafo() {
     const dir = path.posix.dirname(n.id);
     const alvos = new Set();
     for (const m of txt.matchAll(/!?\[\[([^\]|#]+)/g)) { const c = porNome.get(path.posix.basename(m[1].trim()).replace(/\.md$/i, '').toLowerCase()); if (c) alvos.add(c); }
-    for (const m of txt.matchAll(/\]\(([^)#\s]+)\)/g)) { const c = path.posix.normalize(path.posix.join(dir, decodeURI(m[1]))); if (existe.has(c)) alvos.add(c); }
+    for (const m of txt.matchAll(/\]\(([^)#\s]+)\)/g)) { const c = path.posix.normalize(path.posix.join(dir, (() => { try { return decodeURI(m[1]); } catch { return m[1]; } })())); if (existe.has(c)) alvos.add(c); }
     for (const m of txt.matchAll(/`([^`\s]+)`/g)) { const c = m[1].replace(/\/$/, ''); if (existe.has(c)) alvos.add(c); else { const r = path.posix.normalize(path.posix.join(dir, c)); if (existe.has(r)) alvos.add(r); } }
     for (const a of alvos) if (a !== n.id) ligacoes.push({ de: n.id, para: a, tipo: 'link' });
   }
@@ -380,6 +490,8 @@ function envLimpo(extra = {}) {
   // WHATS_PARA: pra quem vai o "me manda no zap" (quem falou pelo WhatsApp, ou o primeiro número autorizado)
   const env = { ...process.env, WHATS_PARA: acessoWhats().numeros[0] || '', ...extra };
   for (const k of Object.keys(env)) if (/^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_PID|CLAUDE_EFFORT|AI_AGENT|CORE_OS_PASSWORD|CORE_OS_HOOK_TOKEN)/.test(k)) delete env[k];
+  // sem telemetria nem relatório de erros nas conversas abertas pelo painel
+  env.DISABLE_TELEMETRY = '1'; env.DISABLE_ERROR_REPORTING = '1';
   return env;
 }
 
@@ -426,6 +538,7 @@ app.post('/api/conversas', (req, res) => {
   const conv = criarConversa(MOTORES[req.body?.motor] ? { motor: req.body.motor } : {});
   const cols = Number(req.body?.cols) || 120;
   const rows = Number(req.body?.rows) || 32;
+  if (MOTORES[motorDe(conv)].api) return res.json(conv); // motor de API: sem terminal, a conversa é um chat
   iniciarTerminal(conv, Math.min(cols, 400), Math.min(rows, 200), typeof req.body?.pedido === 'string' ? req.body.pedido : '');
   res.json(conv);
 });
@@ -434,6 +547,7 @@ app.delete('/api/conversas/:id', (req, res) => {
   const conv = conversas.find((c) => c.id === req.params.id);
   if (!conv) return res.status(404).end();
   vivos.get(conv.id)?.proc.kill();
+  pararOpenAI(conv.id);
   conv.arquivada = true;
   salvarConversas();
   res.json({ ok: true });
@@ -500,6 +614,7 @@ function registroDe(c) {
   const m = motorDe(c);
   if (m === 'claude') return lerRegistro(path.join(PROJETOS, `${c.id}.jsonl`)) || {};
   if (m === 'codex') return lerCodex(c.sessaoMotor).reg || {};
+  if (MOTORES[m].api) return { ultimaAcao: c.ultimaAcao, terminou: !c.processando, mtime: c.ultimaAtividade };
   return {};
 }
 
@@ -511,7 +626,7 @@ app.get('/api/estado', (req, res) => {
   res.json(conversas.filter((c) => !c.arquivada).map((c) => {
     const reg = registroDe(c);
     const nota = lerNota(c.id);
-    const padrao = c.origem === 'whatsapp'
+    const padrao = c.origem === 'agendamento' ? `Agendado · ${c.tituloFixo || 'tarefa'}` : c.origem === 'whatsapp'
       ? `WhatsApp · ${new Date(c.criada).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
       : `Conversa ${c.numero}`;
     const titulo = nota.match(/^#\s+(.+)$/m)?.[1]?.trim() || padrao;
@@ -529,6 +644,7 @@ app.get('/api/conversas/:id/historico', (req, res) => {
   if (!/^[0-9a-f-]{36}$/.test(req.params.id)) return res.status(400).end();
   const conv = conversas.find((c) => c.id === req.params.id);
   if (conv && motorDe(conv) === 'codex') return res.json(lerCodex(conv.sessaoMotor).itens.slice(-300));
+  if (conv && MOTORES[motorDe(conv)].api) return res.json(historicoOpenAI(conv.id).slice(-300));
   if (conv && motorDe(conv) !== 'claude') return res.json((conv.historico || []).slice(-300));
   let linhas = [];
   try { linhas = fs.readFileSync(path.join(PROJETOS, `${req.params.id}.jsonl`), 'utf8').split('\n'); } catch { return res.json([]); }
@@ -596,7 +712,10 @@ function autorizado({ deMim, chat, eu }) {
 
 function ponteWhatsapp(req, res) {
   const token = req.get('x-core-os-token') || '';
-  if (!CFG.tokenPonte || !crypto.timingSafeEqual(hash(token), hash(CFG.tokenPonte))) return res.status(401).json({ erro: 'token' });
+  const agora = Date.now(); const chave = `ponte:${req.ip}`;
+  const recentes = (falhas.get(chave) || []).filter((t) => agora - t < 60_000);
+  if (recentes.length >= 20) return res.status(429).json({ erro: 'tentativas demais' });
+  if (!CFG.tokenPonte || !crypto.timingSafeEqual(hash(token), hash(CFG.tokenPonte))) { falhas.set(chave, [...recentes, agora]); return res.status(401).json({ erro: 'token' }); }
   const b = req.body || {};
   const texto = String(b.texto || '').trim();
   const tipo = String(b.tipo || 'texto');
@@ -629,10 +748,10 @@ function marcarWhats(para, conversa) {
   gravar('whatsapp.json', todos);
 }
 
-async function rodarClaude(conv, texto, para) {
+async function rodarClaude(conv, texto, para, instrucoes = PROMPT_WHATS) {
   const jaTemClaude = fs.existsSync(path.join(PROJETOS, `${conv.id}.jsonl`));
   const { resposta, sessao } = await rodarSemTela(conv, texto, {
-    prompt: `${promptSistema(conv.id)} ${PROMPT_WHATS}`, env: envLimpo({ CORE_OS_SESSAO: conv.id, WHATS_PARA: para || '' }), cwd: CFG.vault, jaTemClaude,
+    prompt: `${promptSistema(conv.id)} ${instrucoes}`, env: envLimpo({ CORE_OS_SESSAO: conv.id, WHATS_PARA: para || '' }), cwd: CFG.vault, jaTemClaude,
   });
   if (sessao && !conv.sessaoMotor) conv.sessaoMotor = sessao;
   if (motorDe(conv) === 'antigravity') {
@@ -694,6 +813,290 @@ async function responderWhats(texto, para) {
   } catch (e) { console.error('[whatsapp] falhou ao responder:', e.message); }
 }
 
+// ---------- agendamento de tarefas ----------
+// Cada tarefa é um prompt que roda sozinho no horário (fuso de Brasília), sem terminal, e vira uma conversa do painel
+// (origem: agendamento). Uma por vez; se o painel ficou fora do ar, execução atrasada em mais de 2h é pulada.
+const FUSO = 'America/Sao_Paulo';
+const MAX_AGENDAMENTOS = 30;
+const PROMPT_AGENDA = [
+  'Esta é uma tarefa agendada: roda sozinha, ninguém está acompanhando agora e não dá pra fazer perguntas.',
+  'Faça o que o prompt pede com o que você tem e termine com um resultado final curto e direto (ele aparece no painel e, se configurado, vai por WhatsApp).',
+  'Se faltar informação, diga o que faltou em vez de perguntar.',
+].join(' ');
+let agendamentos = ler('agendamentos.json', []);
+const salvarAgendamentos = () => gravar('agendamentos.json', agendamentos);
+
+function partesNoFuso(ms) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: FUSO, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short' })
+    .formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return { ano: +p.year, mes: +p.month, dia: +p.day, hora: +p.hour, min: +p.minute, dow: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(p.weekday) };
+}
+// instante (ms) em que o relógio de Brasília marca ano-mes-dia hora:min
+function instanteNoFuso(ano, mes, dia, hora, min) {
+  const alvo = Date.UTC(ano, mes - 1, dia, hora, min);
+  let t = alvo;
+  for (let i = 0; i < 2; i++) { const q = partesNoFuso(t); t -= Date.UTC(q.ano, q.mes - 1, q.dia, q.hora, q.min) - alvo; }
+  return t;
+}
+function proximaExecucao(freq, de) {
+  if (freq.tipo === 'intervalo') return de + freq.minutos * 60_000;
+  const [h, m] = freq.hora.split(':').map(Number);
+  const base = partesNoFuso(de);
+  for (let i = 0; i < 9; i++) {
+    const d = new Date(Date.UTC(base.ano, base.mes - 1, base.dia + i));
+    if (freq.tipo === 'semanal' && !freq.dias.includes((base.dow + i) % 7)) continue;
+    const t = instanteNoFuso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h, m);
+    if (t > de) return t;
+  }
+  return de + 24 * 3600_000;
+}
+
+function validarAgenda(b) {
+  const nome = String(b.nome ?? '').trim(); const prompt = String(b.prompt ?? '').trim();
+  if (!nome || nome.length > 80) return { erro: 'Dê um nome de até 80 caracteres.' };
+  if (!prompt || prompt.length > 4000) return { erro: 'O pedido precisa ter entre 1 e 4000 caracteres.' };
+  const f = b.freq || {}; let freq;
+  if (f.tipo === 'diaria' || f.tipo === 'semanal') {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(f.hora))) return { erro: 'Horário inválido.' };
+    freq = { tipo: f.tipo, hora: f.hora };
+    if (f.tipo === 'semanal') {
+      const dias = [...new Set((Array.isArray(f.dias) ? f.dias : []).map(Number))].filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort();
+      if (!dias.length) return { erro: 'Escolha pelo menos um dia da semana.' };
+      freq.dias = dias;
+    }
+  } else if (f.tipo === 'intervalo') {
+    const minutos = Number(f.minutos);
+    if (!Number.isInteger(minutos) || minutos < 15 || minutos > 10080) return { erro: 'O intervalo vai de 15 minutos a 7 dias.' };
+    freq = { tipo: 'intervalo', minutos };
+  } else return { erro: 'Frequência inválida.' };
+  return { valor: { nome, prompt, freq, enviarWhats: Boolean(b.enviarWhats), ativo: b.ativo !== false } };
+}
+const publicaAgenda = (a) => ({ id: a.id, nome: a.nome, prompt: a.prompt, freq: a.freq, enviarWhats: a.enviarWhats, ativo: a.ativo,
+  proxima: a.ativo ? a.proxima || null : null, ultima: a.ultima || null, naFila: naFilaAgenda.has(a.id) });
+
+const filaAgenda = []; const naFilaAgenda = new Set(); let agendaOcupada = false;
+function enfileirarAgenda(id) {
+  if (naFilaAgenda.has(id)) return false;
+  naFilaAgenda.add(id); filaAgenda.push(id); processarAgenda();
+  return true;
+}
+async function processarAgenda() {
+  if (agendaOcupada) return;
+  const id = filaAgenda.shift();
+  if (!id) return;
+  agendaOcupada = true;
+  try { const ag = agendamentos.find((a) => a.id === id); if (ag) await executarAgendamento(ag); }
+  catch (e) { console.error('[agenda]', e); }
+  finally { naFilaAgenda.delete(id); agendaOcupada = false; setImmediate(processarAgenda); }
+}
+async function executarAgendamento(ag) {
+  const para = acessoWhats().numeros[0] || '';
+  const conv = criarConversa({ origem: 'agendamento', agendamento: ag.id, tituloFixo: ag.nome, motor: prefsMotor().padrao });
+  conv.processando = true; salvarConversas();
+  let resposta = ''; let ok = true;
+  try { resposta = await rodarClaude(conv, ag.prompt, para, PROMPT_AGENDA); }
+  catch (e) { ok = false; resposta = String(e.message || e); }
+  finally { conv.processando = false; conv.ultimaAtividade = Date.now(); salvarConversas(); }
+  if (/^Não consegui abrir/.test(resposta)) ok = false;
+  const atual = agendamentos.find((a) => a.id === ag.id);
+  if (atual) { atual.ultima = { quando: Date.now(), conversa: conv.id, ok, resumo: resposta.slice(0, 300) }; salvarAgendamentos(); }
+  if (ag.enviarWhats) await responderWhats(`*${ag.nome}*\n${resposta.slice(0, 3400) || 'Feito.'}`, para);
+}
+function tickAgenda() {
+  const agora = Date.now(); let mudou = false;
+  for (const ag of agendamentos) {
+    if (!ag.ativo) continue;
+    if (!ag.proxima) { ag.proxima = proximaExecucao(ag.freq, agora); mudou = true; continue; }
+    if (ag.proxima <= agora) {
+      const atraso = agora - ag.proxima;
+      ag.proxima = proximaExecucao(ag.freq, agora); mudou = true;
+      if (atraso < 2 * 3600_000) enfileirarAgenda(ag.id);
+    }
+  }
+  if (mudou) salvarAgendamentos();
+}
+setInterval(tickAgenda, 30_000);
+setTimeout(tickAgenda, 5_000);
+
+app.get('/api/agendamentos', (req, res) => res.json(agendamentos.map(publicaAgenda)));
+app.post('/api/agendamentos', (req, res) => {
+  if (agendamentos.length >= MAX_AGENDAMENTOS) return res.status(400).json({ erro: `Limite de ${MAX_AGENDAMENTOS} agendamentos.` });
+  const v = validarAgenda(req.body || {});
+  if (v.erro) return res.status(400).json(v);
+  const ag = { id: crypto.randomUUID(), criado: Date.now(), ...v.valor };
+  ag.proxima = ag.ativo ? proximaExecucao(ag.freq, Date.now()) : null;
+  agendamentos.push(ag); salvarAgendamentos();
+  res.status(201).json(publicaAgenda(ag));
+});
+app.put('/api/agendamentos/:id', (req, res) => {
+  const ag = agendamentos.find((a) => a.id === req.params.id);
+  if (!ag) return res.status(404).json({ erro: 'Agendamento não encontrado.' });
+  const v = validarAgenda({ ...ag, ...(req.body || {}) });
+  if (v.erro) return res.status(400).json(v);
+  const mudouHorario = JSON.stringify(v.valor.freq) !== JSON.stringify(ag.freq) || (v.valor.ativo && !ag.ativo);
+  Object.assign(ag, v.valor);
+  if (!ag.ativo) ag.proxima = null; else if (mudouHorario || !ag.proxima) ag.proxima = proximaExecucao(ag.freq, Date.now());
+  salvarAgendamentos();
+  res.json(publicaAgenda(ag));
+});
+app.delete('/api/agendamentos/:id', (req, res) => {
+  const i = agendamentos.findIndex((a) => a.id === req.params.id);
+  if (i < 0) return res.status(404).json({ erro: 'Agendamento não encontrado.' });
+  agendamentos.splice(i, 1); salvarAgendamentos();
+  res.json({ ok: true });
+});
+app.post('/api/agendamentos/:id/executar', (req, res) => {
+  const ag = agendamentos.find((a) => a.id === req.params.id);
+  if (!ag) return res.status(404).json({ erro: 'Agendamento não encontrado.' });
+  if (!enfileirarAgenda(ag.id)) return res.status(409).json({ erro: 'Essa tarefa já está na fila ou rodando.' });
+  res.status(202).json({ ok: true });
+});
+
+// ---------- backup do cérebro ----------
+// .tar.gz da pasta do cérebro (tar do sistema). Manual (download em streaming ou guardado em dados/backups)
+// e automático diário (fuso de Brasília) com retenção dos N mais recentes. Restaurar é manual (comando na tela).
+const PASTA_BACKUP = path.join(CFG.dados, 'backups'); fs.mkdirSync(PASTA_BACKUP, { recursive: true });
+const NOME_BACKUP = /^cerebro-\d{8}-\d{6}\.tar\.gz$/;
+const MIDIAS_TAR = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'mp4', 'mov', 'webm', 'm4v'];
+let backupCfg = { auto: false, hora: '03:00', manter: 7, midia: true, ultima: null, proxima: null, ...ler('backup.json', {}) };
+const salvarBackupCfg = () => gravar('backup.json', backupCfg);
+let backupRodando = false; let baixandoBackup = false;
+
+function selo(ms = Date.now()) {
+  const q = partesNoFuso(ms); const z = (n) => String(n).padStart(2, '0');
+  return `${q.ano}${z(q.mes)}${z(q.dia)}-${z(q.hora)}${z(q.min)}${z(new Date(ms).getUTCSeconds())}`;
+}
+function argsTar(saida, midia) {
+  const ex = ['--exclude=node_modules', '--exclude=.trash', '--exclude=*.enviando', ...(midia ? [] : MIDIAS_TAR.map((e) => `--exclude=*.${e}`))];
+  return ['-czf', saida, ...ex, '-C', path.dirname(CFG.vault), path.basename(CFG.vault)];
+}
+function espacoLivre() { try { const f = fs.statfsSync(PASTA_BACKUP); return f.bavail * f.bsize; } catch { return Infinity; } }
+function listarBackups() {
+  return fs.readdirSync(PASTA_BACKUP).filter((n) => NOME_BACKUP.test(n)).sort().reverse().map((nome) => {
+    const st = fs.statSync(path.join(PASTA_BACKUP, nome)); return { nome, tamanho: st.size, quando: st.mtimeMs };
+  });
+}
+function podarBackups() {
+  for (const b of listarBackups().slice(Math.max(1, backupCfg.manter))) { try { fs.unlinkSync(path.join(PASTA_BACKUP, b.nome)); } catch { /* */ } }
+}
+function criarBackup(midia) {
+  if (espacoLivre() < 500 * 1024 * 1024) return Promise.reject(new Error('Pouco espaço em disco (menos de 500 MB livres).'));
+  const nome = `cerebro-${selo()}.tar.gz`; const destino = path.join(PASTA_BACKUP, nome); const tmp = `${destino}.parcial`;
+  return new Promise((ok, falha) => {
+    const proc = spawn('tar', argsTar(tmp, midia), { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = ''; proc.stderr.on('data', (d) => { err += d; });
+    proc.on('error', (e) => falha(new Error(`Não consegui rodar o tar: ${e.message}`)));
+    proc.on('close', (code) => {
+      // código 1 do tar = "um arquivo mudou durante a leitura": o backup serve
+      if (code !== 0 && code !== 1) { try { fs.unlinkSync(tmp); } catch { /* */ } return falha(new Error(err.trim().split('\n').slice(-2).join(' ') || `tar saiu com código ${code}`)); }
+      fs.renameSync(tmp, destino); ok({ nome, tamanho: fs.statSync(destino).size });
+    });
+  });
+}
+async function rodarBackup(origem) {
+  if (backupRodando) return false;
+  backupRodando = true;
+  try {
+    const r = await criarBackup(backupCfg.midia);
+    backupCfg.ultima = { quando: Date.now(), ok: true, arquivo: r.nome, tamanho: r.tamanho, origem };
+    podarBackups();
+  } catch (e) { backupCfg.ultima = { quando: Date.now(), ok: false, erro: String(e.message || e).slice(0, 300), origem }; }
+  finally { backupRodando = false; salvarBackupCfg(); }
+  return true;
+}
+function tickBackup() {
+  if (!backupCfg.auto) return;
+  const agora = Date.now();
+  if (!backupCfg.proxima) { backupCfg.proxima = proximaExecucao({ tipo: 'diaria', hora: backupCfg.hora }, agora); salvarBackupCfg(); return; }
+  if (backupCfg.proxima <= agora) {
+    backupCfg.proxima = proximaExecucao({ tipo: 'diaria', hora: backupCfg.hora }, agora); salvarBackupCfg();
+    rodarBackup('automatico'); // backup atrasado (painel fora do ar) roda mesmo assim
+  }
+}
+setInterval(tickBackup, 60_000);
+setTimeout(tickBackup, 10_000);
+
+app.get('/api/backup', (req, res) => {
+  const { auto, hora, manter, midia, ultima, proxima } = backupCfg;
+  res.json({ config: { auto, hora, manter, midia }, ultima, proxima: auto ? proxima : null, rodando: backupRodando, backups: listarBackups(), livre: espacoLivre() === Infinity ? null : espacoLivre() });
+});
+app.put('/api/backup/config', (req, res) => {
+  const b = req.body || {};
+  const hora = String(b.hora ?? backupCfg.hora); const manter = Number(b.manter ?? backupCfg.manter);
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return res.status(400).json({ erro: 'Horário inválido.' });
+  if (!Number.isInteger(manter) || manter < 1 || manter > 60) return res.status(400).json({ erro: 'Guardar de 1 a 60 backups.' });
+  const mudou = hora !== backupCfg.hora || (b.auto === true && !backupCfg.auto);
+  Object.assign(backupCfg, { auto: Boolean(b.auto ?? backupCfg.auto), hora, manter, midia: Boolean(b.midia ?? backupCfg.midia) });
+  if (!backupCfg.auto) backupCfg.proxima = null; else if (mudou || !backupCfg.proxima) backupCfg.proxima = proximaExecucao({ tipo: 'diaria', hora }, Date.now());
+  podarBackups(); salvarBackupCfg();
+  res.json({ ok: true });
+});
+app.post('/api/backup/criar', (req, res) => {
+  if (backupRodando) return res.status(409).json({ erro: 'Já tem um backup rodando.' });
+  rodarBackup('manual');
+  res.status(202).json({ ok: true });
+});
+const arquivoBackup = (nome) => (NOME_BACKUP.test(String(nome)) && fs.existsSync(path.join(PASTA_BACKUP, nome)) ? path.join(PASTA_BACKUP, nome) : null);
+app.get('/api/backup/arquivo', (req, res) => {
+  const f = arquivoBackup(req.query.nome);
+  if (!f) return res.status(404).json({ erro: 'Backup não encontrado.' });
+  res.download(f, path.basename(f));
+});
+app.delete('/api/backup/arquivo', (req, res) => {
+  const f = arquivoBackup(req.query.nome);
+  if (!f) return res.status(404).json({ erro: 'Backup não encontrado.' });
+  fs.unlinkSync(f); res.json({ ok: true });
+});
+// download direto, sem guardar no servidor (o tar escreve na resposta)
+app.get('/api/backup/baixar', (req, res) => {
+  if (baixandoBackup) return res.status(409).json({ erro: 'Já tem um download de backup em andamento.' });
+  baixandoBackup = true;
+  const proc = spawn('tar', argsTar('-', req.query.midia !== '0'), { stdio: ['ignore', 'pipe', 'ignore'] });
+  res.set({ 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="cerebro-${selo()}.tar.gz"`, 'Cache-Control': 'no-store' });
+  proc.stdout.pipe(res);
+  const fim = () => { baixandoBackup = false; };
+  proc.on('error', () => { fim(); if (!res.headersSent) res.status(500).end(); else res.destroy(); });
+  proc.on('close', fim);
+  res.on('close', () => { proc.kill('SIGTERM'); fim(); }); // cliente desistiu: para o tar
+});
+
+// ---------- motor OpenAI (API): chat no painel e configurações ----------
+const PROMPT_PAINEL = 'Esta conversa acontece no painel web do Core OS: o dono lê sua resposta na tela, então pode usar markdown simples (listas, negrito) quando ajudar.';
+app.post('/api/conversas/:id/mensagem', (req, res) => {
+  const conv = conversas.find((c) => c.id === req.params.id && !c.arquivada);
+  if (!conv) return res.status(404).json({ erro: 'Conversa não encontrada.' });
+  if (!MOTORES[motorDe(conv)].api) return res.status(400).json({ erro: 'Esta conversa usa um terminal; digite nele.' });
+  const texto = String(req.body?.texto ?? '').trim();
+  if (!texto || texto.length > 20000) return res.status(400).json({ erro: 'Mensagem vazia ou longa demais (máximo 20 mil caracteres).' });
+  if (conv.processando) return res.status(409).json({ erro: 'Ainda estou respondendo. Espere terminar ou clique em Parar.' });
+  conv.processando = true; conv.ultimaAtividade = Date.now(); salvarConversas();
+  res.status(202).json({ ok: true });
+  rodarClaude(conv, texto, undefined, PROMPT_PAINEL).catch((e) => console.error('[openai]', e))
+    .finally(() => { conv.processando = false; conv.ultimaAtividade = Date.now(); salvarConversas(); });
+});
+app.post('/api/conversas/:id/parar', (req, res) => {
+  const conv = conversas.find((c) => c.id === req.params.id);
+  if (!conv) return res.status(404).json({ erro: 'Conversa não encontrada.' });
+  res.json({ ok: pararOpenAI(conv.id) });
+});
+const resumoOpenAI = () => ({ config: lerConfigOpenAI(), chave: estadoChave(), uso: usoOpenAI() });
+app.get('/api/config/openai', (req, res) => res.json(resumoOpenAI()));
+app.put('/api/config/openai', (req, res) => {
+  try { gravarConfigOpenAI(req.body || {}); } catch (e) { return res.status(400).json({ erro: e.message }); }
+  res.json(resumoOpenAI());
+});
+app.put('/api/config/openai/chave', async (req, res) => {
+  if (req.body?.apagar) { apagarChave(); return res.json(resumoOpenAI()); }
+  const chave = String(req.body?.chave ?? '').trim();
+  if (!/^sk-[A-Za-z0-9_\-]{16,}$/.test(chave)) return res.status(400).json({ erro: 'Isso não parece uma chave da OpenAI (começa com sk-).' });
+  try { await testarChave(chave); } catch (e) { return res.status(400).json({ erro: `A OpenAI não aceitou essa chave: ${e.message}` }); }
+  salvarChave(chave); // só guarda depois de a OpenAI aceitar
+  res.json(resumoOpenAI());
+});
+app.get('/api/config/openai/modelos', async (req, res) => {
+  try { res.json({ modelos: await listarModelos() }); } catch (e) { res.status(502).json({ erro: e.message }); }
+});
+
 // ---------- estáticos ----------
 const vendor = (p) => path.join(AQUI, 'node_modules', p);
 app.use('/vendor/xterm', express.static(vendor('@xterm/xterm')));
@@ -708,8 +1111,9 @@ const wss = new WebSocketServer({ noServer: true });
 servidor.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, 'http://x');
   const conv = conversas.find((c) => c.id === url.searchParams.get('conversa'));
-  const origemOk = !req.headers.origin || new URL(req.headers.origin).host === req.headers.host;
-  if (url.pathname !== '/ws' || !logado(req) || !conv || !origemOk) { socket.destroy(); return; }
+  let origemOk = !req.headers.origin;
+  try { origemOk = origemOk || new URL(req.headers.origin).host === req.headers.host; } catch { origemOk = false; }
+  if (url.pathname !== '/ws' || !logado(req) || !conv || !origemOk || MOTORES[motorDe(conv)].api) { socket.destroy(); return; }
   wss.handleUpgrade(req, socket, head, (ws) => {
     const cols = Number(url.searchParams.get('cols')) || 120;
     const rows = Number(url.searchParams.get('rows')) || 32;

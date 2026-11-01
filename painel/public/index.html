@@ -31,6 +31,8 @@
         <span class="painel-titulo">Arquivos</span>
         <button class="icone-botao" data-acao="recarregar-arvore" title="Recarregar"></button>
       </header>
+      <div class="busca-caixa"><input id="busca" type="search" placeholder="Buscar nas notas" autocomplete="off" spellcheck="false" aria-label="Buscar nas notas"></div>
+      <nav id="busca-lista" class="arvore-lista busca-lista" hidden></nav>
       <nav id="arvore-lista" class="arvore-lista"></nav>
     </aside>
 
@@ -48,6 +50,8 @@
       <button data-acao="grafo" data-dica="Grafo"></button>
       <button data-acao="nova-conversa" data-dica="Nova conversa"></button>
       <button data-acao="conteudos" data-dica="Conteúdos"></button>
+      <button data-acao="agenda" data-dica="Agendamentos"></button>
+      <button data-acao="backup" data-dica="Backup"></button>
       <span class="dock-separador"></span>
       <button data-acao="centralizar" data-dica="Centralizar"></button>
       <button data-acao="tema" data-dica="Tema"></button>
@@ -78,6 +82,39 @@
           <button class="icone-botao" data-acao="fechar-config" title="Fechar"></button>
         </header>
         <div id="config-corpo" class="config-corpo"></div>
+      </div>
+    </section>
+
+    <section id="folha-agenda" class="folha" hidden>
+      <div class="folha-fundo" data-acao="fechar-agenda"></div>
+      <div class="folha-corpo folha-estreita">
+        <header class="folha-topo">
+          <div><h2>Agendamentos</h2><p>Tarefas que o seu cérebro faz sozinho, no horário que você escolher (Brasília).</p></div>
+          <button class="icone-botao" data-acao="fechar-agenda" title="Fechar"></button>
+        </header>
+        <div id="agenda-corpo" class="config-corpo"></div>
+      </div>
+    </section>
+
+    <section id="folha-backup" class="folha" hidden>
+      <div class="folha-fundo" data-acao="fechar-backup"></div>
+      <div class="folha-corpo folha-estreita">
+        <header class="folha-topo">
+          <div><h2>Backup</h2><p>Uma cópia do seu cérebro, pra você nunca perder as notas.</p></div>
+          <button class="icone-botao" data-acao="fechar-backup" title="Fechar"></button>
+        </header>
+        <div id="backup-corpo" class="config-corpo"></div>
+      </div>
+    </section>
+
+    <section id="folha-openai" class="folha" hidden>
+      <div class="folha-fundo" data-acao="fechar-openai"></div>
+      <div class="folha-corpo folha-estreita">
+        <header class="folha-topo">
+          <div><h2>OpenAI (API)</h2><p>Um agente próprio que usa a sua chave da OpenAI, sem instalar nada no servidor.</p></div>
+          <button class="icone-botao" data-acao="fechar-openai" title="Fechar"></button>
+        </header>
+        <div id="openai-corpo" class="config-corpo"></div>
       </div>
     </section>
 

@@ -13,6 +13,7 @@ const P = {
   sair: '<path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M10 16l4-4-4-4M14 12H4"/>',
   fechar: '<path d="M6 6l12 12M18 6L6 18"/>',
   recarregar: '<path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/>',
+  backup: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
   relogio: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   raio: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
   seta: '<path d="M9 6l6 6-6 6"/>',
@@ -43,6 +44,8 @@ const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const url = (caminho) => `/api/arquivo?caminho=${encodeURIComponent(caminho)}`;
+const ehChat = (c) => c?.motor === 'openai'; // motor de API: sem terminal, a conversa é um chat
+const semTela = (c) => c.origem === 'whatsapp' || c.origem === 'agendamento'; // conversa que rodou sem terminal: card de histórico
 const tipoDe = (c) => (/\.(png|jpe?g|webp|gif|svg)$/i.test(c) ? 'imagem' : /\.(mp4|mov|webm|m4v)$/i.test(c) ? 'video' : /\.(md|txt|json|sh|js|csv|canvas)$/i.test(c) ? 'texto' : 'outro');
 const nomeDe = (c) => c.split('/').pop();
 const guardar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* */ } };
@@ -191,17 +194,78 @@ function renderizar(txt, caminho) {
   const html = marked.parse(txt, { gfm: true });
   const tmp = el('div', '', html);
   tmp.querySelectorAll('img').forEach((i) => { i.src = resolver(decodeURI(i.getAttribute('src'))); });
-  tmp.querySelectorAll('script, iframe, object').forEach((n) => n.remove());
+  tmp.querySelectorAll('script, iframe, object, embed, form, link, meta, base').forEach((n) => n.remove());
+  // sem handlers inline (onerror=…) nem javascript: — nota é conteúdo não confiável
+  tmp.querySelectorAll('*').forEach((n) => {
+    for (const at of [...n.attributes]) {
+      const v = at.value.trim().toLowerCase();
+      if (/^on/i.test(at.name) || ((at.name === 'href' || at.name === 'src' || at.name === 'xlink:href' || at.name === 'action') && /^(javascript|vbscript|data:text\/html)/.test(v.replace(/[\s\u0000-\u001f]/g, '')))) n.removeAttribute(at.name);
+    }
+  });
   return (fm ? `<div class="frontmatter">${esc(fm)}</div>` : '') + tmp.innerHTML;
 }
 
 function cardArquivo(caminho, x, y) {
   const t = tipoDe(caminho);
   const tam = t === 'imagem' ? { w: 380, h: 430 } : t === 'video' ? { w: 340, h: 600 } : { w: 560, h: 620 };
-  return criarCard({
+  const card = criarCard({
     chave: `arq:${caminho}`, classe: t === 'texto' || t === 'outro' ? 'card-doc' : 'card-midia',
     icone: t === 'imagem' ? 'imagem' : t === 'video' ? 'filme' : 'doc',
     titulo: nomeDe(caminho), sub: caminho.split('/').slice(-2, -1)[0] || '', x, y, ...tam, corpo: corpoDeArquivo(caminho),
+    extras: /\.(md|txt)$/i.test(caminho) ? '<button class="botao-leve botao-editar" data-editar title="Editar nota">Editar</button>' : '',
+  });
+  if (/\.(md|txt)$/i.test(caminho)) card.querySelector('[data-editar]').addEventListener('click', () => editarNota(card, caminho));
+  return card;
+}
+
+// ---------- editor de notas ----------
+const sujos = new Set(); // cards com alterações não salvas
+addEventListener('beforeunload', (e) => { if (sujos.size) { e.preventDefault(); e.returnValue = ''; } });
+async function editarNota(card, caminho) {
+  if (card.querySelector('.editor')) return;
+  const corpo = card.querySelector('.card-corpo'); const leitura = corpo.querySelector('.md');
+  const botao = card.querySelector('[data-editar]'); botao.disabled = true;
+  let nota;
+  try { nota = await api(`/api/nota?caminho=${encodeURIComponent(caminho)}`); } catch { botao.disabled = false; return; }
+  if (nota.erro) { botao.disabled = false; alert(nota.erro); return; }
+  let versao = nota.versao; let original = nota.conteudo;
+  const ed = el('div', 'editor');
+  const area = el('textarea', 'editor-area'); area.value = original; area.spellcheck = false; area.setAttribute('aria-label', `Editar ${nomeDe(caminho)}`);
+  const barra = el('div', 'editor-barra');
+  const msg = el('span', 'editor-msg'); msg.setAttribute('role', 'status');
+  const salvar = el('button', 'botao-leve botao-salvar'); salvar.type = 'button'; salvar.textContent = 'Salvar';
+  const cancelar = el('button', 'botao-leve'); cancelar.type = 'button'; cancelar.textContent = 'Cancelar';
+  barra.append(msg, cancelar, salvar); ed.append(barra, area);
+  leitura.hidden = true; corpo.prepend(ed); area.focus(); botao.hidden = true;
+  const sujo = () => area.value !== original;
+  const marcar = () => { sujos[sujo() ? 'add' : 'delete'](card); msg.textContent = sujo() ? 'Alterações não salvas' : ''; msg.className = 'editor-msg'; };
+  area.addEventListener('input', marcar);
+  const sair = (releitura) => {
+    sujos.delete(card); ed.remove(); leitura.hidden = false; botao.hidden = false; botao.disabled = false;
+    if (releitura != null) leitura.innerHTML = renderizar(releitura, caminho);
+  };
+  async function gravar(forcar = false) {
+    salvar.disabled = true; msg.textContent = 'Salvando…'; msg.className = 'editor-msg';
+    let r;
+    try { r = await fetch('/api/nota', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caminho, conteudo: area.value, versao, forcar }) }); }
+    catch { salvar.disabled = false; msg.textContent = 'Sem conexão. Nada foi perdido, tente de novo.'; msg.className = 'editor-msg erro'; return; }
+    if (r.status === 401) { mostrarLogin(); salvar.disabled = false; return; }
+    const j = await r.json().catch(() => ({}));
+    salvar.disabled = false;
+    if (r.status === 409) {
+      msg.className = 'editor-msg erro'; msg.textContent = 'A nota mudou no servidor. ';
+      const b = el('button', 'editor-link'); b.type = 'button'; b.textContent = 'Sobrescrever com a minha versão';
+      b.addEventListener('click', () => gravar(true)); msg.append(b); return;
+    }
+    if (!r.ok) { msg.className = 'editor-msg erro'; msg.textContent = j.erro || 'Não consegui salvar.'; return; }
+    versao = j.versao; original = area.value; sair(original);
+  }
+  salvar.addEventListener('click', () => gravar());
+  cancelar.addEventListener('click', () => { if (sujo() && !confirm('Descartar as alterações?')) return; sair(); });
+  area.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); gravar(); }
+    if (e.key === 'Escape') cancelar.click();
+    if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); document.execCommand('insertText', false, '  '); }
   });
 }
 
@@ -218,6 +282,9 @@ function abrirArquivo(caminho) {
   marcarArvore(caminho);
 }
 function fecharArquivo(caminho) {
+  const c = mundo.querySelector(`.card[data-chave="${CSS.escape(`arq:${caminho}`)}"]`);
+  if (c && sujos.has(c) && !confirm('Esta nota tem alterações não salvas. Fechar mesmo assim?')) return;
+  sujos.delete(c);
   const e = espaco(); e.abertos = e.abertos.filter((c) => c !== caminho); delete e.pos[`arq:${caminho}`]; salvarEspaco(e);
   mundo.querySelector(`.card[data-chave="${CSS.escape(`arq:${caminho}`)}"]`)?.remove();
 }
@@ -314,7 +381,7 @@ function desenharEspaco() {
       mundo.append(bv);
     }
   } else {
-    if (conv.origem === 'whatsapp' && !assumidas.has(conv.id)) cardHistorico(conv); else cardTerminal(conv);
+    if (ehChat(conv)) cardChat(conv); else if (semTela(conv) && !assumidas.has(conv.id)) cardHistorico(conv); else cardTerminal(conv);
     desenharFilhos(conv);
   }
   for (const c of e.abertos) cardArquivo(c, 0, 0);
@@ -348,7 +415,7 @@ function desenharFilhos(conv) {
     card.dataset.pai = 'terminal';
   });
   const term = mundo.querySelector('.card[data-chave="terminal"] [data-status]');
-  if (term) { term.className = `pilula ${conv.trabalhando ? 'trabalhando' : ''}`; term.textContent = conv.trabalhando ? 'trabalhando' : conv.ativo ? 'pronto' : 'pausado'; }
+  if (term && !ehChat(conv)) { term.className = `pilula ${conv.trabalhando ? 'trabalhando' : ''}`; term.textContent = conv.trabalhando ? 'trabalhando' : conv.ativo ? 'pronto' : 'pausado'; }
   void e;
 }
 
@@ -405,7 +472,7 @@ function pintarConversas() {
     const ordenados = [...pendentes, ...itens.filter((i) => i.feito)];
     bloco.innerHTML = `
       <div class="conversa-cabeca"><span class="ponto ${c.trabalhando ? 'trabalhando' : c.ativo ? 'ativo' : ''}"></span>
-        ${c.origem === 'whatsapp' ? `<span class="selo-whats" title="Veio do WhatsApp">${ic('zap')}</span>` : ''}<span class="card-titulo">${esc(c.titulo)}</span><img class="selo-motor" src="/logos/${esc(c.motor || 'claude')}.svg" alt="${esc(c.motorNome || 'Claude Code')}" title="${esc(c.motorNome || 'Claude Code')}">${itens.length ? `<span class="conversa-progresso">${feitos}/${itens.length}</span>` : ''}</div>
+        ${c.origem === 'whatsapp' ? `<span class="selo-whats" title="Veio do WhatsApp">${ic('zap')}</span>` : c.origem === 'agendamento' ? `<span class="selo-whats selo-agenda" title="Tarefa agendada">${ic('relogio')}</span>` : ''}<span class="card-titulo">${esc(c.titulo)}</span><img class="selo-motor" src="/logos/${esc(c.motor || 'claude')}.svg" alt="${esc(c.motorNome || 'Claude Code')}" title="${esc(c.motorNome || 'Claude Code')}">${itens.length ? `<span class="conversa-progresso">${feitos}/${itens.length}</span>` : ''}</div>
       <div class="conversa-corpo"><div><div class="conversa-interno">
         ${resumo ? `<p class="resumo">${esc(resumo)}</p>` : `<p class="resumo">${c.nota ? '' : 'O resumo e as ações aparecem aqui assim que o agente criar a nota de status.'}</p>`}
         ${ordenados.length ? `<div class="secao-mini">${pendentes.length ? `${pendentes.length} pendente${pendentes.length > 1 ? 's' : ''}` : 'Tudo feito'}</div>
@@ -433,15 +500,16 @@ function focarTerminal() {
 const MOTORES_UI = {
   claude: { empresa: 'Anthropic', instalar: 'Instala o Claude Code neste servidor (curl -fsSL https://claude.ai/install.sh | bash), confere com claude --version e me guia no login com a minha conta.' },
   codex: { empresa: 'OpenAI', instalar: 'Instala o Codex CLI da OpenAI neste servidor (npm i -g @openai/codex), confere com codex --version e me guia no login com a minha conta ChatGPT (codex login --device-auth). No fim, me avisa que já posso escolher o Codex numa conversa nova.' },
+  openai: { empresa: 'OpenAI · pela API' },
   antigravity: { empresa: 'Google', instalar: 'Instala o Antigravity CLI do Google neste servidor pelo instalador oficial (curl -fsSL https://antigravity.google/cli/install.sh | bash), confere se o comando agy funciona e me guia no login com a minha conta Google (link com código, pelo SSH). No fim, me avisa que já posso escolher o Antigravity numa conversa nova.' },
 };
 async function escolherMotor() {
   const mot = await api('/api/config/motores');
   $('#seletor-motores').innerHTML = Object.entries(mot.motores).map(([id, m]) => `
-    <button class="motor-opcao ${m.instalado ? '' : 'falta'}" data-acao="${m.instalado ? 'abrir-motor' : 'instalar-motor'}" data-motor="${id}">
+    <button class="motor-opcao ${m.instalado ? '' : 'falta'}" data-acao="${m.instalado ? 'abrir-motor' : id === 'openai' ? 'config-openai' : 'instalar-motor'}" data-motor="${id}">
       <img src="/logos/${id}.svg" alt="" width="40" height="40">
       <b>${esc(m.nome)}</b><span>${esc(MOTORES_UI[id]?.empresa || '')}</span>
-      <em>${m.instalado ? (mot.padrao === id ? 'Último usado' : 'Pronto') : 'Não instalado · instalar'}</em>
+      <em>${m.instalado ? (mot.padrao === id ? 'Último usado' : 'Pronto') : id === 'openai' ? 'Falta a chave · configurar' : 'Não instalado · instalar'}</em>
     </button>`).join('');
   $('#escolher-motor').hidden = false;
 }
@@ -455,7 +523,7 @@ async function novaConversa(pedido, motor) {
   const c = await api('/api/conversas', { method: 'POST', body: JSON.stringify(corpo) });
   await atualizarEstado();
   trocarPara(c.id);
-  setTimeout(focarTerminal, 150);
+  if (c.motor !== 'openai') setTimeout(focarTerminal, 150);
 }
 async function encerrar(c) {
   if (!confirm(`Encerrar "${c.titulo}"? A conversa fica salva no histórico do ${c.motorNome || 'Claude Code'}.`)) return;
@@ -469,7 +537,7 @@ async function atualizarEstado() {
   const antes = JSON.stringify(S.conversas.map((c) => [c.id, c.motor, c.titulo, c.nota, c.trabalhando, c.ativo, c.ultimaAcao, c.subagentes, c.midias]));
   S.conversas = await api('/api/estado');
   const ativa = S.conversas.find((c) => c.id === S.ativa);
-  if (ativa?.origem === 'whatsapp' && !assumidas.has(ativa.id)) pintarHistorico(ativa).catch(() => {});
+  if (ativa && (ehChat(ativa) || (semTela(ativa) && !assumidas.has(ativa.id)))) { pintarHistorico(ativa).catch(() => {}); atualizarChat(ativa); }
   const depois = JSON.stringify(S.conversas.map((c) => [c.id, c.motor, c.titulo, c.nota, c.trabalhando, c.ativo, c.ultimaAcao, c.subagentes, c.midias]));
   if (antes === depois) return;
   pintarConversas();
@@ -477,12 +545,42 @@ async function atualizarEstado() {
   if (conv) {
     desenharFilhos(conv);
     const titulo = mundo.querySelector('.card[data-chave="terminal"] .card-titulo');
-    if (titulo) titulo.innerHTML = `${esc(conv.titulo)} <span class="card-sub">${conv.origem === 'whatsapp' && !assumidas.has(conv.id) ? 'WhatsApp' : esc(conv.motorNome || 'Claude Code')}</span>`;
+    if (titulo) titulo.innerHTML = `${esc(conv.titulo)} <span class="card-sub">${!ehChat(conv) && semTela(conv) && !assumidas.has(conv.id) ? (conv.origem === 'agendamento' ? 'Agendado' : 'WhatsApp') : esc(conv.motorNome || 'Claude Code')}</span>`;
     desenharLigacoes();
   }
 }
 
 // ---------- árvore ----------
+// ---------- busca nas notas ----------
+let buscaTimer = null; let buscaSeq = 0;
+function destacar(alvo, texto, de, ate) {
+  alvo.append(texto.slice(0, de));
+  const m = el('mark'); m.textContent = texto.slice(de, ate); alvo.append(m);
+  alvo.append(texto.slice(ate));
+}
+async function fazerBusca(q) {
+  const lista = $('#busca-lista'); const arv = $('#arvore-lista');
+  if (q.trim().length < 2) { lista.hidden = true; arv.hidden = false; return; }
+  const minha = ++buscaSeq;
+  let achados = [];
+  try { achados = await api(`/api/busca?q=${encodeURIComponent(q)}`); } catch { achados = []; }
+  if (minha !== buscaSeq) return; // chegou uma busca mais nova
+  arv.hidden = true; lista.hidden = false; lista.innerHTML = '';
+  if (!achados.length) { const v = el('div', 'busca-vazio'); v.textContent = 'Nada encontrado.'; lista.append(v); return; }
+  for (const r of achados) {
+    const b = el('button', 'achado'); b.type = 'button';
+    const nome = el('b'); nome.textContent = r.nome; b.append(nome);
+    const sub = el('small'); sub.textContent = r.caminho; b.append(sub);
+    for (const t of r.trechos) {
+      const x = el('span', 'trecho'); destacar(x, t.texto, t.de, t.ate); b.append(x);
+    }
+    b.addEventListener('click', () => abrirArquivo(r.caminho));
+    lista.append(b);
+  }
+}
+$('#busca')?.addEventListener('input', (e) => { clearTimeout(buscaTimer); buscaTimer = setTimeout(() => fazerBusca(e.target.value), 250); });
+$('#busca')?.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; fazerBusca(''); } });
+
 const abertas = new Set(recuperar('pastas', ['conteudo']));
 async function carregarArvore() {
   const dados = await api('/api/arvore');
@@ -677,13 +775,15 @@ async function abrir(caminho) {
 // ---------- dock e ações ----------
 const aberta = (q) => (q === 'arvore' ? !$('#arvore').classList.contains('fechado') : false);
 function pintarDock() {
-  const icones = { arvore: 'arvore', grafo: 'grafo', config: 'engrenagem', 'nova-conversa': 'conversaNova', conteudos: 'grade', centralizar: 'mira', sair: 'sair',
+  const icones = { arvore: 'arvore', grafo: 'grafo', config: 'engrenagem', 'nova-conversa': 'conversaNova', conteudos: 'grade', agenda: 'relogio', backup: 'backup', centralizar: 'mira', sair: 'sair',
     tema: document.documentElement.dataset.tema === 'escuro' ? 'sol' : 'lua' };
   document.querySelectorAll('#dock button').forEach((b) => { b.innerHTML = ic(icones[b.dataset.acao]); });
   $('#dock [data-acao="arvore"]')?.classList.toggle('ligado', !$('#arvore')?.classList.contains('fechado'));
   $('#dock [data-acao="conteudos"]')?.classList.toggle('ligado', !$('#folha-conteudos')?.hidden);
   $('#dock [data-acao="grafo"]')?.classList.toggle('ligado', !$('#grafo')?.hidden);
   $('#dock [data-acao="config"]')?.classList.toggle('ligado', !$('#folha-config')?.hidden);
+  $('#dock [data-acao="agenda"]')?.classList.toggle('ligado', !$('#folha-agenda')?.hidden);
+  $('#dock [data-acao="backup"]')?.classList.toggle('ligado', !$('#folha-backup')?.hidden);
 }
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-acao]');
@@ -706,6 +806,12 @@ document.addEventListener('click', async (e) => {
   if (a === 'recarregar-arvore') carregarArvore();
   if (a === 'grafo') (Grafo.aberto ? Grafo.fechar() : Grafo.abrir());
   if (a === 'config') abrirConfig();
+  if (a === 'agenda') abrirAgenda();
+  if (a === 'config-openai') abrirOpenAI();
+  if (a === 'fechar-openai') fecharOpenAI();
+  if (a === 'backup') abrirBackup();
+  if (a === 'fechar-backup') fecharBackup();
+  if (a === 'fechar-agenda') fecharAgenda();
   if (a === 'fechar-config') fecharConfig();
   if (a === 'whats-conectar') conectarWhats(b);
   if (a === 'motor') api('/api/config/motores', { method: 'POST', body: JSON.stringify({ [b.dataset.campo]: b.dataset.valor }) }).then(pintarConfig);
@@ -723,6 +829,9 @@ document.addEventListener('keydown', (e) => {
   else if (!$('#escolher-motor').hidden) fecharSeletor();
   else if (!$('#folha-conteudos').hidden) fecharConteudos();
   else if (!$('#folha-config').hidden) fecharConfig();
+  else if (!$('#folha-agenda').hidden) fecharAgenda();
+  else if (!$('#folha-backup').hidden) fecharBackup();
+  else if (!$('#folha-openai').hidden) fecharOpenAI();
   else if (Grafo.aberto) Grafo.fechar();
 });
 
@@ -873,6 +982,327 @@ async function tickConfig() {
   if ($('#acesso-novo')?.value) return;
   await pintarConfig();
 }
+// ---------- agendamento de tarefas ----------
+const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const quandoBR = (ms) => new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+function descreverFreq(f) {
+  if (f.tipo === 'diaria') return `Todo dia às ${f.hora}`;
+  if (f.tipo === 'semanal') return `${f.dias.map((d) => DIAS_SEMANA[d]).join(', ')} às ${f.hora}`;
+  const n = f.minutos;
+  if (n % 1440 === 0) return `A cada ${n / 1440} dia${n / 1440 > 1 ? 's' : ''}`;
+  if (n % 60 === 0) return `A cada ${n / 60} h`;
+  return `A cada ${n} min`;
+}
+let agendaLista = []; let agendaEdicao = null; // agendaEdicao: id | 'novo' | null
+async function abrirAgenda() {
+  const corpo = $('#agenda-corpo');
+  if (!corpo.firstElementChild) corpo.innerHTML = '<div id="agenda-form"></div><div id="agenda-lista" class="agenda-lista"></div>';
+  $('#folha-agenda').hidden = false; pintarDock();
+  await pintarAgenda();
+  clearInterval(abrirAgenda.t);
+  abrirAgenda.t = setInterval(() => { if ($('#folha-agenda').hidden) clearInterval(abrirAgenda.t); else pintarAgenda().catch(() => {}); }, 5000);
+}
+function fecharAgenda() { $('#folha-agenda').hidden = true; clearInterval(abrirAgenda.t); agendaEdicao = null; pintarDock(); }
+async function pintarAgenda() {
+  agendaLista = await api('/api/agendamentos');
+  const raiz = $('#agenda-lista');
+  if (!raiz) return;
+  const topo = agendaEdicao ? '' : '<div class="agenda-topo"><button class="botao-leve botao-salvar" data-agenda="novo" type="button">+ Nova tarefa</button></div>';
+  raiz.innerHTML = topo + (agendaLista.length ? agendaLista.map((a) => {
+    const u = a.ultima;
+    return `<article class="config-cartao agenda-item ${a.ativo ? '' : 'pausada'}" data-id="${esc(a.id)}">
+      <div class="config-cabeca"><span class="config-icone azul">${ic('relogio')}</span>
+        <div class="config-titulo"><b>${esc(a.nome)}</b><span>${esc(descreverFreq(a.freq))}${a.enviarWhats ? ' · avisa no WhatsApp' : ''}</span></div>
+        <span class="pilula ${a.naFila ? 'trabalhando' : a.ativo ? 'conectado' : ''}">${a.naFila ? 'Rodando…' : a.ativo ? 'Ativa' : 'Pausada'}</span></div>
+      <p class="agenda-prompt"></p>
+      <dl class="config-linhas">
+        <div><dt>Próxima</dt><dd>${a.proxima ? esc(quandoBR(a.proxima)) : '—'}</dd></div>
+        <div><dt>Última</dt><dd>${u ? `${esc(quandoBR(u.quando))} · ${u.ok ? 'ok' : '<span style="color:#ff3b30">falhou</span>'}` : 'ainda não rodou'}</dd></div>
+      </dl>
+      ${u?.resumo ? '<p class="agenda-resumo"></p>' : ''}
+      <div class="config-botoes">
+        <button class="botao-leve" data-agenda="executar" type="button" ${a.naFila ? 'disabled' : ''}>Executar agora</button>
+        <button class="botao-leve" data-agenda="alternar" type="button">${a.ativo ? 'Pausar' : 'Ativar'}</button>
+        <button class="botao-leve" data-agenda="editar" type="button">Editar</button>
+        <button class="botao-leve" data-agenda="excluir" type="button">Excluir</button>
+      </div></article>`;
+  }).join('') : '<p class="config-dica">Nenhuma tarefa agendada ainda. Crie uma pra o seu cérebro trabalhar sozinho (um resumo diário, um lembrete, uma checagem).</p>');
+  // textos livres entram como texto, nunca como HTML
+  raiz.querySelectorAll('.agenda-item').forEach((n) => {
+    const a = agendaLista.find((x) => x.id === n.dataset.id);
+    n.querySelector('.agenda-prompt').textContent = a.prompt;
+    const r = n.querySelector('.agenda-resumo'); if (r) r.textContent = a.ultima.resumo;
+  });
+}
+function formAgenda(ag) {
+  const f = ag?.freq || { tipo: 'diaria', hora: '08:00' };
+  const unid = f.tipo === 'intervalo' ? (f.minutos % 1440 === 0 ? 1440 : f.minutos % 60 === 0 ? 60 : 1) : 60;
+  const form = el('form', 'config-cartao agenda-form');
+  form.dataset.tipo = f.tipo;
+  form.innerHTML = `
+    <label>Nome<input name="nome" maxlength="80" required placeholder="Ex.: Resumo da manhã"></label>
+    <label>O que o cérebro deve fazer<textarea name="prompt" rows="4" maxlength="4000" required placeholder="Ex.: Resuma as notas que mudaram ontem e liste 3 prioridades pra hoje."></textarea></label>
+    <div class="agenda-linha">
+      <label>Quando<select name="tipo"><option value="diaria">Todo dia</option><option value="semanal">Em dias da semana</option><option value="intervalo">De tempos em tempos</option></select></label>
+      <label class="so-horario">Horário (Brasília)<input type="time" name="hora" required></label>
+      <label class="so-intervalo">A cada<span class="agenda-par"><input type="number" name="n" min="1" max="10080" step="1"><select name="unid"><option value="1">minutos</option><option value="60">horas</option><option value="1440">dias</option></select></span></label>
+    </div>
+    <div class="agenda-dias so-semanal">${DIAS_SEMANA.map((d, i) => `<label><input type="checkbox" name="dia" value="${i}"> ${d}</label>`).join('')}</div>
+    <label class="agenda-check"><input type="checkbox" name="whats"> Mandar o resultado no WhatsApp</label>
+    <p class="login-erro" role="alert"></p>
+    <div class="config-botoes"><button type="submit" class="botao-leve botao-salvar">Salvar</button><button type="button" class="botao-leve" data-agenda="cancelar">Cancelar</button></div>`;
+  form.nome.value = ag?.nome || ''; form.prompt.value = ag?.prompt || '';
+  form.tipo.value = f.tipo; form.hora.value = f.hora || '08:00';
+  form.n.value = f.tipo === 'intervalo' ? f.minutos / unid : 1; form.unid.value = String(unid);
+  form.querySelectorAll('[name=dia]').forEach((c) => { c.checked = (f.dias || []).includes(Number(c.value)); });
+  form.whats.checked = Boolean(ag?.enviarWhats);
+  form.tipo.addEventListener('change', () => { form.dataset.tipo = form.tipo.value; });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const erro = form.querySelector('.login-erro'); erro.textContent = '';
+    const tipo = form.tipo.value;
+    const freq = tipo === 'intervalo' ? { tipo, minutos: Math.round(Number(form.n.value) * Number(form.unid.value)) }
+      : tipo === 'semanal' ? { tipo, hora: form.hora.value, dias: [...form.querySelectorAll('[name=dia]:checked')].map((c) => Number(c.value)) }
+        : { tipo, hora: form.hora.value };
+    const corpo = { nome: form.nome.value, prompt: form.prompt.value, freq, enviarWhats: form.whats.checked };
+    const edit = agendaEdicao && agendaEdicao !== 'novo';
+    const r = await fetch(edit ? `/api/agendamentos/${agendaEdicao}` : '/api/agendamentos', { method: edit ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+    if (r.status === 401) return mostrarLogin();
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { erro.textContent = j.erro || 'Não consegui salvar.'; return; }
+    agendaEdicao = null; $('#agenda-form').innerHTML = ''; pintarAgenda();
+  });
+  return form;
+}
+function mostrarFormAgenda(ag) {
+  agendaEdicao = ag ? ag.id : 'novo';
+  const f = $('#agenda-form'); f.innerHTML = ''; f.append(formAgenda(ag));
+  f.querySelector('[name=nome]').focus();
+  pintarAgenda();
+}
+$('#folha-agenda')?.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-agenda]'); if (!b) return;
+  const id = b.closest('.agenda-item')?.dataset.id; const ag = agendaLista.find((x) => x.id === id);
+  const acao = b.dataset.agenda;
+  if (acao === 'novo') return mostrarFormAgenda(null);
+  if (acao === 'cancelar') { agendaEdicao = null; $('#agenda-form').innerHTML = ''; return pintarAgenda(); }
+  if (acao === 'editar' && ag) return mostrarFormAgenda(ag);
+  if (acao === 'alternar' && ag) await api(`/api/agendamentos/${id}`, { method: 'PUT', body: JSON.stringify({ ativo: !ag.ativo }) });
+  if (acao === 'executar' && ag) { b.disabled = true; await api(`/api/agendamentos/${id}/executar`, { method: 'POST' }); }
+  if (acao === 'excluir' && ag && confirm(`Excluir a tarefa "${ag.nome}"? As conversas que ela já gerou continuam no painel.`)) await api(`/api/agendamentos/${id}`, { method: 'DELETE' });
+  pintarAgenda();
+});
+
+// ---------- chat (motor de API: OpenAI) ----------
+function cardChat(conv) {
+  const card = criarCard({
+    chave: 'terminal', classe: 'card-terminal card-historico card-chat', icone: 'conversaNova', titulo: conv.titulo, sub: conv.motorNome || 'OpenAI (API)',
+    x: 0, y: 0, w: 860, h: 540, fechavel: false, extras: '<span class="pilula" data-status>pronto</span>',
+  });
+  const raiz = el('div', 'chat');
+  raiz.innerHTML = `<div class="historico"></div>
+    <form class="chat-entrada"><textarea class="chat-texto" rows="2" maxlength="20000" placeholder="Escreva pro seu cérebro… (Enter envia, Shift+Enter quebra a linha)" aria-label="Mensagem"></textarea>
+      <button type="submit" class="botao-leve botao-salvar chat-enviar">Enviar</button></form><p class="chat-aviso" role="status"></p>`;
+  card.querySelector('.card-corpo').append(raiz);
+  const form = raiz.querySelector('form'); const area = raiz.querySelector('.chat-texto'); const aviso = raiz.querySelector('.chat-aviso');
+  const viva = () => S.conversas.find((x) => x.id === conv.id) || conv;
+  async function enviar() {
+    const texto = area.value.trim(); if (!texto) return;
+    aviso.textContent = '';
+    const r = await fetch(`/api/conversas/${conv.id}/mensagem`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texto }) });
+    if (r.status === 401) return mostrarLogin();
+    if (!r.ok) { aviso.textContent = (await r.json().catch(() => ({}))).erro || 'Não consegui enviar.'; return; }
+    area.value = '';
+    viva().processando = true; viva().trabalhando = true; atualizarChat(viva());
+    await atualizarEstado(); setTimeout(() => pintarHistorico(conv, true), 600);
+  }
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (viva().processando) { await fetch(`/api/conversas/${conv.id}/parar`, { method: 'POST' }); return; }
+    enviar();
+  });
+  area.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!viva().processando) enviar(); } });
+  pintarHistorico(conv, true).then(() => atualizarChat(viva()));
+  setTimeout(() => area.focus(), 80);
+  return card;
+}
+function atualizarChat(conv) {
+  const card = mundo.querySelector('.card-chat'); if (!card || !conv) return;
+  const pill = card.querySelector('[data-status]'); const b = card.querySelector('.chat-enviar');
+  const ocupado = Boolean(conv.processando);
+  pill.className = `pilula${ocupado ? ' trabalhando' : ''}`; pill.textContent = ocupado ? (conv.ultimaAcao || 'pensando…') : 'pronto';
+  b.textContent = ocupado ? 'Parar' : 'Enviar'; b.classList.toggle('parar', ocupado);
+}
+
+// ---------- configurações da OpenAI (API) ----------
+const numeroBR = (n) => Number(n || 0).toLocaleString('pt-BR');
+async function abrirOpenAI() {
+  fecharSeletor();
+  const corpo = $('#openai-corpo');
+  if (!corpo.firstElementChild) {
+    corpo.innerHTML = `
+      <section class="config-cartao agenda-form" id="openai-chave">
+        <div class="config-cabeca"><span class="config-icone azul"><img src="/logos/openai.svg" alt="" width="22" height="22" style="filter:invert(1)"></span><div class="config-titulo"><b>Chave da API</b><span id="openai-chave-estado"></span></div></div>
+        <form id="openai-form-chave" class="agenda-linha">
+          <label>Nova chave<input type="password" name="chave" placeholder="sk-…" autocomplete="off" spellcheck="false"></label>
+          <div class="config-botoes"><button type="submit" class="botao-leve botao-salvar">Testar e guardar</button><button type="button" class="botao-leve" data-openai="apagar-chave" hidden>Remover chave</button></div>
+        </form>
+        <p class="login-erro" id="openai-erro-chave" role="alert"></p>
+        <p class="config-dica">A chave é testada na OpenAI antes de ser guardada neste servidor (arquivo só do servidor) e nunca volta pra esta tela. Crie uma em platform.openai.com/api-keys. Quem define <code>OPENAI_API_KEY</code> no servidor tem prioridade.</p>
+      </section>
+      <form class="config-cartao agenda-form" id="openai-form-cfg">
+        <div class="config-cabeca"><span class="config-icone azul">${ic('engrenagem')}</span><div class="config-titulo"><b>Modelo e limites</b><span>Controle do que cada pedido pode gastar</span></div></div>
+        <label>Modelo<input name="modelo" list="openai-modelos" placeholder="Escolha da lista ou digite" autocomplete="off" spellcheck="false" required></label>
+        <datalist id="openai-modelos"></datalist>
+        <div class="config-botoes"><button type="button" class="botao-leve" data-openai="modelos">Buscar modelos da minha conta</button></div>
+        <div class="agenda-linha">
+          <label>Passos por pedido<input type="number" name="maxPassos" min="1" max="100" step="1" required></label>
+          <label>Limite de saída por resposta (tokens, 0 = sem limite)<input type="number" name="maxSaida" min="0" step="1" required></label>
+          <label>Limite diário (tokens, 0 = sem limite)<input type="number" name="limiteDiario" min="0" step="1" required></label>
+        </div>
+        <label class="agenda-check"><input type="checkbox" name="shell"> Permitir que o agente rode comandos de shell neste servidor (avançado)</label>
+        <p class="config-dica"><b>Atenção:</b> sem isso o agente só lê e escreve arquivos do cérebro, o que é bem mais seguro. Com isso ligado ele pode rodar qualquer comando que o painel pode, inclusive a partir de mensagens do WhatsApp e de tarefas agendadas.</p>
+        <p class="login-erro" id="openai-erro-cfg" role="alert"></p>
+        <div class="config-botoes"><button type="submit" class="botao-leve botao-salvar">Salvar</button></div>
+      </form>
+      <section class="config-cartao"><dl class="config-linhas" id="openai-uso"></dl>
+        <p class="config-dica">Tokens contados pelo que a OpenAI informa a cada resposta. O custo em dinheiro depende do modelo escolhido: confira os preços atuais no painel da OpenAI. Esse motor não tem terminal nem skills do Claude Code: ele conversa pelo painel, pelo WhatsApp e pelos agendamentos.</p>
+      </section>`;
+    $('#openai-form-chave').addEventListener('submit', salvarChaveOpenAI);
+    $('#openai-form-cfg').addEventListener('submit', salvarCfgOpenAI);
+  }
+  $('#folha-openai').hidden = false;
+  await pintarOpenAI(true);
+}
+function fecharOpenAI() { $('#folha-openai').hidden = true; }
+async function pintarOpenAI(preencher) {
+  const d = await api('/api/config/openai');
+  const k = d.chave;
+  $('#openai-chave-estado').textContent = k.configurada ? `Configurada (termina em ${k.final}) · ${k.origem === 'ambiente' ? 'definida no servidor' : 'guardada pelo painel'}` : 'Ainda não configurada';
+  $('#openai-form-chave [data-openai="apagar-chave"]').hidden = k.origem !== 'painel';
+  const f = $('#openai-form-cfg');
+  if (preencher) { f.modelo.value = d.config.modelo; f.maxPassos.value = d.config.maxPassos; f.maxSaida.value = d.config.maxSaida; f.limiteDiario.value = d.config.limiteDiario; f.shell.checked = d.config.shell; }
+  $('#openai-uso').innerHTML = `<div><dt>Hoje</dt><dd>${numeroBR(d.uso.hoje.entrada)} tokens de entrada · ${numeroBR(d.uso.hoje.saida)} de saída</dd></div>
+    <div><dt>Total (90 dias)</dt><dd>${numeroBR(d.uso.total.entrada)} de entrada · ${numeroBR(d.uso.total.saida)} de saída</dd></div>`;
+}
+async function salvarChaveOpenAI(e) {
+  e.preventDefault();
+  const f = e.target; const erro = $('#openai-erro-chave'); erro.textContent = '';
+  const b = f.querySelector('.botao-salvar'); b.disabled = true; b.textContent = 'Testando…';
+  const r = await fetch('/api/config/openai/chave', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chave: f.chave.value }) });
+  b.disabled = false; b.textContent = 'Testar e guardar';
+  if (r.status === 401) return mostrarLogin();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { erro.textContent = j.erro || 'Não consegui guardar a chave.'; return; }
+  f.chave.value = ''; pintarOpenAI(false); buscarModelosOpenAI();
+}
+async function buscarModelosOpenAI() {
+  const erro = $('#openai-erro-cfg'); erro.textContent = '';
+  const r = await fetch('/api/config/openai/modelos');
+  if (r.status === 401) return mostrarLogin();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { erro.textContent = j.erro || 'Não consegui buscar os modelos.'; return; }
+  $('#openai-modelos').innerHTML = j.modelos.map((m) => `<option value="${esc(m)}"></option>`).join('');
+  erro.textContent = j.modelos.length ? `${j.modelos.length} modelos de texto disponíveis na sua conta. Clique no campo Modelo pra escolher.` : 'Nenhum modelo de texto encontrado na sua conta.';
+}
+async function salvarCfgOpenAI(e) {
+  e.preventDefault();
+  const f = e.target; const erro = $('#openai-erro-cfg'); erro.textContent = '';
+  const r = await fetch('/api/config/openai', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ modelo: f.modelo.value, maxPassos: Number(f.maxPassos.value), maxSaida: Number(f.maxSaida.value), limiteDiario: Number(f.limiteDiario.value), shell: f.shell.checked }) });
+  if (r.status === 401) return mostrarLogin();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { erro.textContent = j.erro || 'Não consegui salvar.'; return; }
+  const b = f.querySelector('.botao-salvar'); b.textContent = 'Salvo ✓'; setTimeout(() => { b.textContent = 'Salvar'; }, 1500);
+  pintarOpenAI(false);
+}
+$('#folha-openai')?.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-openai]'); if (!b) return;
+  if (b.dataset.openai === 'modelos') await buscarModelosOpenAI();
+  if (b.dataset.openai === 'apagar-chave' && confirm('Remover a chave guardada pelo painel? Conversas com este motor deixam de funcionar até você colocar outra.')) {
+    await api('/api/config/openai/chave', { method: 'PUT', body: JSON.stringify({ apagar: true }) }); pintarOpenAI(false);
+  }
+});
+
+// ---------- backup do cérebro ----------
+const tamanhoBR = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`);
+const quandoCompleto = (ms) => new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+async function abrirBackup() {
+  const corpo = $('#backup-corpo');
+  if (!corpo.firstElementChild) {
+    corpo.innerHTML = `
+      <form id="backup-cfg" class="config-cartao agenda-form">
+        <div class="config-cabeca"><span class="config-icone azul">${ic('backup')}</span><div class="config-titulo"><b>Backup automático</b><span>Todo dia, no horário de Brasília, guardado neste servidor</span></div></div>
+        <label class="agenda-check"><input type="checkbox" name="auto"> Ligar o backup automático</label>
+        <div class="agenda-linha">
+          <label>Horário<input type="time" name="hora" required></label>
+          <label>Guardar os últimos<input type="number" name="manter" min="1" max="60" step="1" required></label>
+        </div>
+        <label class="agenda-check"><input type="checkbox" name="midia"> Incluir imagens e vídeos (o arquivo fica bem maior)</label>
+        <p class="login-erro" role="alert"></p>
+        <div class="config-botoes"><button type="submit" class="botao-leve botao-salvar">Salvar</button></div>
+      </form>
+      <div id="backup-lista" class="agenda-lista"></div>`;
+    $('#backup-cfg').addEventListener('submit', salvarConfigBackup);
+  }
+  $('#folha-backup').hidden = false; pintarDock();
+  await pintarBackup(true);
+  clearInterval(abrirBackup.t);
+  abrirBackup.t = setInterval(() => { if ($('#folha-backup').hidden) clearInterval(abrirBackup.t); else pintarBackup(false).catch(() => {}); }, 4000);
+}
+function fecharBackup() { $('#folha-backup').hidden = true; clearInterval(abrirBackup.t); pintarDock(); }
+async function salvarConfigBackup(e) {
+  e.preventDefault();
+  const f = e.target; const erro = f.querySelector('.login-erro'); erro.textContent = '';
+  const r = await fetch('/api/backup/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ auto: f.auto.checked, hora: f.hora.value, manter: Number(f.manter.value), midia: f.midia.checked }) });
+  if (r.status === 401) return mostrarLogin();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { erro.textContent = j.erro || 'Não consegui salvar.'; return; }
+  erro.textContent = ''; const b = f.querySelector('.botao-salvar'); b.textContent = 'Salvo ✓'; setTimeout(() => { b.textContent = 'Salvar'; }, 1500);
+  pintarBackup(false);
+}
+async function pintarBackup(preencherForm) {
+  const d = await api('/api/backup');
+  const f = $('#backup-cfg');
+  if (f && preencherForm) { f.auto.checked = d.config.auto; f.hora.value = d.config.hora; f.manter.value = d.config.manter; f.midia.checked = d.config.midia; }
+  const u = d.ultima;
+  const raiz = $('#backup-lista');
+  raiz.innerHTML = `
+    <article class="config-cartao">
+      <dl class="config-linhas">
+        <div><dt>Próximo automático</dt><dd>${d.proxima ? esc(quandoCompleto(d.proxima)) : 'desligado'}</dd></div>
+        <div><dt>Último backup</dt><dd>${d.rodando ? 'rodando agora…' : u ? `${esc(quandoCompleto(u.quando))} · ${u.ok ? `ok (${esc(tamanhoBR(u.tamanho))})` : '<span style="color:#ff3b30">falhou</span>'}` : 'nenhum ainda'}</dd></div>
+        ${d.livre != null ? `<div><dt>Espaço livre no servidor</dt><dd>${esc(tamanhoBR(d.livre))}</dd></div>` : ''}
+      </dl>
+      ${u && !u.ok ? '<p class="agenda-resumo" id="backup-erro"></p>' : ''}
+      <div class="config-botoes">
+        <a class="botao-leve botao-salvar" href="/api/backup/baixar?midia=${d.config.midia ? 1 : 0}" download>Baixar agora</a>
+        <button class="botao-leve" type="button" data-backup="criar" ${d.rodando ? 'disabled' : ''}>Criar backup no servidor</button>
+      </div>
+      <p class="config-dica">"Baixar agora" gera o arquivo na hora e manda direto pro seu computador, sem ocupar espaço aqui.</p>
+    </article>
+    <article class="config-cartao">
+      <div class="config-titulo"><b>Backups guardados no servidor</b><span>${d.backups.length ? `${d.backups.length} arquivo${d.backups.length > 1 ? 's' : ''}` : 'nenhum'}</span></div>
+      ${d.backups.map((b) => `<div class="backup-item" data-nome="${esc(b.nome)}"><div><b>${esc(quandoCompleto(b.quando))}</b><span>${esc(tamanhoBR(b.tamanho))}</span></div>
+        <a class="botao-leve" href="/api/backup/arquivo?nome=${encodeURIComponent(b.nome)}" download>Baixar</a>
+        <button class="botao-leve" type="button" data-backup="excluir">Excluir</button></div>`).join('')}
+      <p class="config-dica">Estes backups ficam no mesmo disco do cérebro: se o servidor se perder, eles se perdem junto. <b>Baixe de vez em quando uma cópia pro seu computador.</b></p>
+      <p class="config-dica">Pra restaurar: <code>mkdir restaurado &amp;&amp; tar -xzf cerebro-AAAAMMDD-HHMMSS.tar.gz -C restaurado</code>, confira o conteúdo e copie o que precisar de volta.</p>
+    </article>`;
+  if (u && !u.ok) $('#backup-erro').textContent = u.erro || '';
+}
+$('#folha-backup')?.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-backup]'); if (!b) return;
+  if (b.dataset.backup === 'criar') { b.disabled = true; await api('/api/backup/criar', { method: 'POST' }); }
+  if (b.dataset.backup === 'excluir') {
+    const nome = b.closest('.backup-item').dataset.nome;
+    if (!confirm('Excluir este backup do servidor? Não dá pra desfazer.')) return;
+    await api(`/api/backup/arquivo?nome=${encodeURIComponent(nome)}`, { method: 'DELETE' });
+  }
+  pintarBackup(false);
+});
+
 function fecharConfig() { $('#folha-config').hidden = true; qrAtual = null; qrVencido = false; pintarDock(); }
 async function pintarConfig() {
   const [cfg, mot, ext] = await Promise.all([api('/api/config'), api('/api/config/motores'), api('/api/extras')]);
@@ -896,6 +1326,7 @@ async function pintarConfig() {
         <div class="config-titulo"><b>Motor de IA</b><span>Quem responde nas conversas: Claude Code, Codex (OpenAI) ou Antigravity (Google)</span></div></div>
       <dl class="config-linhas"><div><dt>Conversas novas no painel</dt><dd class="config-escolha">${escolha('padrao')}</dd></div>
         <div><dt>WhatsApp</dt><dd class="config-escolha">${escolha('whatsapp')}</dd></div></dl>
+      <div class="config-botoes"><button class="botao-leve" data-acao="config-openai" type="button">Configurar OpenAI (API)</button></div>
       <p class="config-dica">Vale pras próximas conversas; as abertas seguem no motor em que começaram. No WhatsApp, a troca abre uma conversa nova.</p>
       ${Object.values(mot.motores).map((m) => `<p class="config-dica"><b>${esc(m.nome)}:</b> ${m.instalado ? '' : 'não instalado. '}${esc(m.login)}</p>`).join('')}
     </section>

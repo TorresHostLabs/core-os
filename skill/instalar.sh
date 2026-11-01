@@ -92,7 +92,9 @@ poe CLAUDE_BIN "$CLAUDE_BIN"
 poe EVO_URL http://127.0.0.1:8080
 poe EVO_INSTANCE cerebro
 [ -n "$WHATS" ] && poe WHATS_DONO "$WHATS"
-IP="$(curl -fsS4 --max-time 5 https://api.ipify.org || hostname -I | awk '{print $1}')"
+# IP detectado localmente (sem consultar serviço de terceiros): interface usada pela rota padrão
+IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src"){print $(i+1); exit}}')"
+[ -n "$IP" ] || IP="$(hostname -I | awk '{print $1}')"
 if [ -n "$DOMINIO" ]; then
   poe N8N_HOST "n8n.$DOMINIO"; poe N8N_PROTOCOL https; poe N8N_PUBLIC_URL "https://n8n.$DOMINIO/"; poe N8N_SECURE_COOKIE true
   URL_PAINEL="https://$DOMINIO"; URL_N8N="https://n8n.$DOMINIO"

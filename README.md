@@ -27,6 +27,9 @@ Ou à mão: `git clone https://github.com/TorresHostLabs/core-os /root/core-os &
 ## Como funciona
 - Cada conversa do painel é um `claude --session-id <id>` real num terminal (node-pty), na pasta do cérebro, com prompt de sistema apontando a nota `sessoes/<id>.md`.
 - O painel lê o registro do Claude Code (`~/.claude/projects/<pasta>/<id>.jsonl` e `<id>/subagents/*.meta.json`) pra mostrar a última ação e os subagentes.
+- Motor **OpenAI (API)** (`painel/openai.js`): agente próprio que chama a API da OpenAI (Chat Completions) em ciclo de ferramentas (listar, ler, buscar, escrever, editar), todas presas à pasta do cérebro; `.git`, `.claude/hooks` e `.env` não são graváveis. Sem terminal: a conversa é um chat no painel; também serve WhatsApp e agendamentos. Chave por `OPENAI_API_KEY` no `.env` ou pela tela (Configurações › OpenAI), testada antes de guardar. Modelo escolhido por você (lista da sua conta), limites de passos, de saída e diário de tokens, e contagem de uso. Comando de shell vem **desligado**; ligar dá ao agente o mesmo poder do painel. `OPENAI_BASE_URL` aponta pra outro endpoint compatível.
+- Agendamentos (dock › relógio): tarefas com horário (todo dia, dias da semana ou a cada N tempo, fuso de Brasília) rodam sozinhas com `claude -p`, uma por vez, e viram conversas `Agendado · nome` no painel; opcionalmente o resultado vai pro WhatsApp. Ficam em `dados/agendamentos.json`. Execução atrasada em mais de 2h (painel fora do ar) é pulada.
+- Backup (dock › disco): `.tar.gz` da pasta do cérebro (sem `node_modules` e `.trash`). "Baixar agora" gera em streaming direto pro seu computador; "Criar backup no servidor" e o automático diário guardam em `dados/backups/` e mantêm só os N mais recentes. Restaurar é manual (`tar -xzf`).
 - Arquivo de mídia novo em `conteudo/` vira card da conversa que estava ativa.
 - WhatsApp: Evolution (webhook) → n8n (só conversas individuais) → painel confere quem pode dar ordens (`dados/whatsapp-acesso.json`) → `POST /api/ponte/whatsapp` com token → `claude -p` → resposta pela Evolution.
 - Senhas em `/opt/core-os/.env` (600/640). Painel e n8n atrás do Caddy; HTTPS automático com domínio.
@@ -34,6 +37,9 @@ Ou à mão: `git clone https://github.com/TorresHostLabs/core-os /root/core-os &
 ## Pegadinhas
 - Painel aberto a partir de outra sessão do Claude Code: as variáveis `CLAUDE_CODE_*` herdadas fazem o filho não gravar histórico. O `envLimpo()` do server.js remove.
 - Portal do Maestri em segundo plano congela animação e o desenho do xterm (só no teste; navegador normal funciona).
+
+## Privacidade
+Sem telemetria: o painel não envia nada a terceiros; n8n (diagnósticos, avisos de versão, templates), Evolution (`TELEMETRY_ENABLED`) e o Claude Code aberto pelo painel (`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`) sobem com isso desligado, e o instalador descobre o IP localmente. As únicas conexões externas são as que você usa de propósito: Anthropic/OpenAI/Google (os motores), WhatsApp (Evolution), e os downloads do instalador (Docker, NodeSource, claude.ai).
 
 ## Créditos
 Adaptado por [TorresHostLabs](https://github.com/TorresHostLabs) a partir do projeto original **Core OS**, de Felipe Tâmbara ([felipefernandees/core-os](https://github.com/felipefernandees/core-os)). Licença do original: própria (Felipe Tâmbara). Dependências: MIT (express, ws, xterm, node-pty prebuilt, marked).

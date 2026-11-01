@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { rodarOpenAI, chaveConfigurada } from './openai.js';
 
 const casa = os.homedir();
 
@@ -19,6 +20,11 @@ export const MOTORES = {
     bin: process.env.CODEX_BIN || 'codex',
     login: 'No terminal do servidor: codex login --device-auth (conta ChatGPT) ou OPENAI_API_KEY no /opt/core-os/.env.',
   },
+  openai: {
+    nome: 'OpenAI (API)',
+    api: true, // sem programa externo nem terminal: o painel chama a API direto (openai.js)
+    login: 'Cole a chave da API em Configurações › OpenAI (API), ou defina OPENAI_API_KEY no /opt/core-os/.env.',
+  },
   antigravity: {
     nome: 'Antigravity',
     bin: process.env.AGY_BIN || 'agy',
@@ -30,12 +36,13 @@ export const motorDe = (conv) => (MOTORES[conv?.motor] ? conv.motor : 'claude');
 // acha o executável no PATH (ou caminho absoluto); ~/.local/bin entra mesmo se o serviço não tiver no PATH
 const PASTAS = [...new Set([...(process.env.PATH || '').split(':'), path.join(casa, '.local', 'bin'), '/usr/local/bin', '/usr/bin'])];
 export function caminhoBin(id) {
+  if (MOTORES[id].api) return null;
   const bin = MOTORES[id].bin;
   if (bin.includes('/')) return fs.existsSync(bin) ? bin : null;
   for (const p of PASTAS) { const f = path.join(p, bin); try { fs.accessSync(f, fs.constants.X_OK); return f; } catch { /* */ } }
   return null;
 }
-export const disponiveis = () => Object.fromEntries(Object.entries(MOTORES).map(([id, m]) => [id, { nome: m.nome, instalado: Boolean(caminhoBin(id)), login: m.login }]));
+export const disponiveis = () => Object.fromEntries(Object.entries(MOTORES).map(([id, m]) => [id, { nome: m.nome, instalado: m.api ? chaveConfigurada() : Boolean(caminhoBin(id)), login: m.login }]));
 
 // texto vira string TOML (o Codex lê -c chave=valor como TOML)
 const toml = (s) => JSON.stringify(String(s));
@@ -58,6 +65,7 @@ export function comandoTerminal(conv, { prompt, jaTemClaude }) {
 // ---------- sem tela (WhatsApp): devolve { resposta, sessao } ----------
 export function rodarSemTela(conv, texto, { prompt, env, cwd, jaTemClaude }) {
   const id = motorDe(conv);
+  if (MOTORES[id].api) return rodarOpenAI(conv, texto, { prompt, env });
   const bin = caminhoBin(id) || MOTORES[id].bin;
   let args; let saidaArq = null;
   if (id === 'codex') {

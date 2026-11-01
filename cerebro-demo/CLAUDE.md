@@ -95,7 +95,7 @@ Toda conversa aberta pelo painel recebe, no prompt de sistema, o caminho da nota
 
 ## 7. Motores de IA
 
-O painel roda cada conversa num motor: **Claude Code** (padrão), **Codex** (OpenAI) ou **Antigravity** (Google, comando `agy`). A escolha fica na engrenagem do painel, separada pra conversas novas e pro WhatsApp. Todos leem as mesmas regras e skills. Código em `/opt/core-os/painel/motores.js`.
+O painel roda cada conversa num motor: **Claude Code** (padrão), **Codex** (OpenAI) **Antigravity** (Google, comando `agy`) ou **OpenAI (API)** (agente próprio do painel que usa a chave da OpenAI: lê e escreve só neste cérebro, sem terminal e sem as skills do Claude Code; comandos de shell só se o dono ligar). A escolha fica na engrenagem do painel, separada pra conversas novas e pro WhatsApp. Todos leem as mesmas regras e skills. Código em `/opt/core-os/painel/motores.js`.
 
 ## 8. Regras de operação
 
