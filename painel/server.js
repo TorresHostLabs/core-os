@@ -462,7 +462,16 @@ app.get('/api/primeiros-testes', (req, res) => res.json(PRIMEIROS_TESTES));
 
 // ---------- motores de IA (Claude Code, Codex, Antigravity) ----------
 const prefsMotor = () => ({ padrao: 'claude', whatsapp: 'claude', ...ler('motores.json', {}) });
-app.get('/api/config/motores', (req, res) => res.json({ ...prefsMotor(), motores: disponiveis() }));
+// O motor preferido só vale se estiver instalado/configurado neste servidor; senão usa o primeiro que estiver.
+// Assim, sem Claude Code mas com a chave da OpenAI, tudo (painel, WhatsApp, agendamentos) já roda pela OpenAI.
+const ORDEM_MOTORES = ['claude', 'openai', 'codex', 'antigravity'];
+function motorEfetivo(preferido) {
+  const disp = disponiveis();
+  if (disp[preferido]?.instalado) return preferido;
+  return ORDEM_MOTORES.find((m) => disp[m]?.instalado) || preferido;
+}
+const motoresEfetivos = () => { const p = prefsMotor(); return { padrao: motorEfetivo(p.padrao), whatsapp: motorEfetivo(p.whatsapp) }; };
+app.get('/api/config/motores', (req, res) => res.json({ ...prefsMotor(), ...motoresEfetivos(), motores: disponiveis() }));
 app.post('/api/config/motores', (req, res) => {
   const atual = prefsMotor();
   for (const k of ['padrao', 'whatsapp']) if (MOTORES[req.body?.[k]]) atual[k] = req.body[k];
@@ -496,6 +505,12 @@ function envLimpo(extra = {}) {
 }
 
 function iniciarTerminal(conv, cols = 120, rows = 32, pedido = '') {
+  if (!disponiveis()[motorDe(conv)]?.instalado) {
+    // sem o programa neste servidor: avisa na tela (não guarda em `vivos`, então reabrir confere de novo)
+    const m = MOTORES[motorDe(conv)];
+    return { proc: { write() {}, resize() {}, kill() {} }, clientes: new Set(), pedido: '',
+      buffer: `\r\n\x1b[33m  ${m.nome} não está instalado neste servidor.\x1b[0m\r\n\r\n  Abra uma nova conversa e escolha outro motor (ex.: OpenAI (API)), ou instale este programa.\r\n` };
+  }
   const jaTemClaude = fs.existsSync(path.join(PROJETOS, `${conv.id}.jsonl`));
   const { bin, args } = comandoTerminal(conv, { prompt: promptSistema(conv.id), jaTemClaude });
   const env = envLimpo({ TERM: 'xterm-256color', COLORTERM: 'truecolor', CORE_OS_SESSAO: conv.id });
@@ -528,14 +543,20 @@ function iniciarTerminal(conv, cols = 120, rows = 32, pedido = '') {
 }
 
 function criarConversa(extra = {}) {
-  const conv = { id: crypto.randomUUID(), criada: Date.now(), ultimaAtividade: Date.now(), midias: [], numero: conversas.length + 1, motor: prefsMotor().padrao, ...extra };
+  const conv = { id: crypto.randomUUID(), criada: Date.now(), ultimaAtividade: Date.now(), midias: [], numero: conversas.length + 1, motor: motoresEfetivos().padrao, ...extra };
   conversas.push(conv);
   salvarConversas();
   return conv;
 }
 
 app.post('/api/conversas', (req, res) => {
-  const conv = criarConversa(MOTORES[req.body?.motor] ? { motor: req.body.motor } : {});
+  const pedido = MOTORES[req.body?.motor] ? req.body.motor : motoresEfetivos().padrao;
+  if (!disponiveis()[pedido]?.instalado) {
+    const m = MOTORES[pedido];
+    const alt = Object.entries(disponiveis()).filter(([, d]) => d.instalado).map(([, d]) => d.nome);
+    return res.status(400).json({ erro: `${m.nome} não está ${m.api ? 'configurado' : 'instalado'} neste servidor.${m.api ? ` ${m.login}` : ''}${alt.length ? ` Disponível agora: ${alt.join(', ')}.` : ' Nenhum motor de IA está pronto: configure a OpenAI (API) em Configurações ou instale um dos programas.'}`, motor: pedido });
+  }
+  const conv = criarConversa({ motor: pedido });
   const cols = Number(req.body?.cols) || 120;
   const rows = Number(req.body?.rows) || 32;
   if (MOTORES[motorDe(conv)].api) return res.json(conv); // motor de API: sem terminal, a conversa é um chat
@@ -736,8 +757,8 @@ function conversaDoWhats(para, forcarNova) {
   const atual = conversas.find((c) => c.id === est.conversa && !c.arquivada);
   const parada = !est.ultima || Date.now() - est.ultima > SEIS_HORAS;
   // se o dono assumiu essa conversa pelo terminal do painel, o WhatsApp abre outra pra não brigarem
-  if (atual && !forcarNova && !parada && !vivos.has(atual.id) && motorDe(atual) === prefsMotor().whatsapp) return atual;
-  const nova = criarConversa({ origem: 'whatsapp', motor: prefsMotor().whatsapp, whatsDe: para });
+  if (atual && !forcarNova && !parada && !vivos.has(atual.id) && motorDe(atual) === motoresEfetivos().whatsapp) return atual;
+  const nova = criarConversa({ origem: 'whatsapp', motor: motoresEfetivos().whatsapp, whatsDe: para });
   marcarWhats(para, nova.id);
   return nova;
 }
@@ -891,7 +912,7 @@ async function processarAgenda() {
 }
 async function executarAgendamento(ag) {
   const para = acessoWhats().numeros[0] || '';
-  const conv = criarConversa({ origem: 'agendamento', agendamento: ag.id, tituloFixo: ag.nome, motor: prefsMotor().padrao });
+  const conv = criarConversa({ origem: 'agendamento', agendamento: ag.id, tituloFixo: ag.nome, motor: motoresEfetivos().padrao });
   conv.processando = true; salvarConversas();
   let resposta = ''; let ok = true;
   try { resposta = await rodarClaude(conv, ag.prompt, para, PROMPT_AGENDA); }

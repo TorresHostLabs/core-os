@@ -516,12 +516,18 @@ async function escolherMotor() {
 }
 const fecharSeletor = () => { $('#escolher-motor').hidden = true; };
 
+let pedidoPendente = null;
 async function novaConversa(pedido, motor) {
   if (Grafo.aberto) Grafo.fechar();
   fecharSeletor();
   // o pedido (se houver) é escrito pelo servidor na caixa do agente, sem enviar: a pessoa lê e aperta Enter
   const corpo = { cols: 104, rows: 30, ...(motor ? { motor } : {}), ...(typeof pedido === 'string' && pedido ? { pedido } : {}) };
   const c = await api('/api/conversas', { method: 'POST', body: JSON.stringify(corpo) });
+  if (!c?.id) { // motor que não existe/não está configurado neste servidor: explica e deixa escolher outro
+    alert(c?.erro || 'Não consegui abrir a conversa.'); escolherMotor(); return;
+  }
+  // motor de chat (sem terminal): o pedido pronto vai pra caixa de texto, sem enviar, como no terminal
+  if (c.motor === 'openai' && typeof pedido === 'string' && pedido) pedidoPendente = { id: c.id, texto: pedido };
   await atualizarEstado();
   trocarPara(c.id);
   if (c.motor !== 'openai') setTimeout(focarTerminal, 150);
@@ -794,7 +800,7 @@ document.addEventListener('click', async (e) => {
   if (a === 'nova-conversa') escolherMotor();
   if (a === 'fechar-seletor') fecharSeletor();
   if (a === 'abrir-motor') { api('/api/config/motores', { method: 'POST', body: JSON.stringify({ padrao: b.dataset.motor }) }); novaConversa(null, b.dataset.motor); }
-  if (a === 'instalar-motor') novaConversa(MOTORES_UI[b.dataset.motor].instalar, 'claude');
+  if (a === 'instalar-motor') novaConversa(MOTORES_UI[b.dataset.motor].instalar);
   if (a === 'conteudos') abrirConteudos();
   if (a === 'fechar-conteudos') fecharConteudos();
   if (a === 'conteudos-voltar') mostrarRaiz();
@@ -819,7 +825,7 @@ document.addEventListener('click', async (e) => {
   if (a === 'whats-desconectar') desconectarWhats();
   if (a === 'acesso-adicionar') autorizarNumero();
   if (a === 'acesso-remover') salvarAcesso((x) => { x.numeros = x.numeros.filter((n) => n !== b.dataset.n); });
-  if (a === 'pedir') { fecharConfig(); novaConversa(b.dataset.pedido, 'claude'); }
+  if (a === 'pedir') { fecharConfig(); novaConversa(b.dataset.pedido); } // sem motor fixo: vale o que está configurado e instalado
   if (a === 'comece-alternar') { const f = !$('#comece').classList.contains('fechado'); guardar('comeceFechado', f); $('#comece').classList.toggle('fechado', f); }
   if (a === 'sair') { await fetch('/api/logout', { method: 'POST' }); location.reload(); }
 });
@@ -1106,6 +1112,7 @@ function cardChat(conv) {
       <button type="submit" class="botao-leve botao-salvar chat-enviar">Enviar</button></form><p class="chat-aviso" role="status"></p>`;
   card.querySelector('.card-corpo').append(raiz);
   const form = raiz.querySelector('form'); const area = raiz.querySelector('.chat-texto'); const aviso = raiz.querySelector('.chat-aviso');
+  if (pedidoPendente?.id === conv.id) { area.value = pedidoPendente.texto; pedidoPendente = null; aviso.textContent = 'Pedido pronto na caixa: leia e aperte Enter pra enviar.'; }
   const viva = () => S.conversas.find((x) => x.id === conv.id) || conv;
   async function enviar() {
     const texto = area.value.trim(); if (!texto) return;
