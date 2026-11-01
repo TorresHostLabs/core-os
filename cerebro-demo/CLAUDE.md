@@ -1,6 +1,6 @@
 # CLAUDE.md ({{NOME}})
 > Constituição do segundo cérebro. Leia antes de qualquer ação. Fonte única de contexto e roteamento.
-> Instalado pelo Core OS (arquitetura do segundo cérebro do Felipe Tâmbara, v3).
+> Instalado pelo Core OS (arquitetura do segundo cérebro v3).
 
 ---
 
