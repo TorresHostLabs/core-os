@@ -35,5 +35,8 @@ Ou à mão: `git clone https://github.com/TorresHostLabs/core-os /root/core-os &
 - Painel aberto a partir de outra sessão do Claude Code: as variáveis `CLAUDE_CODE_*` herdadas fazem o filho não gravar histórico. O `envLimpo()` do server.js remove.
 - Portal do Maestri em segundo plano congela animação e o desenho do xterm (só no teste; navegador normal funciona).
 
+## Privacidade
+Sem telemetria: o painel não envia nada a terceiros; n8n (diagnósticos, avisos de versão, templates), Evolution (`TELEMETRY_ENABLED`) e o Claude Code aberto pelo painel (`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`) sobem com isso desligado, e o instalador descobre o IP localmente. As únicas conexões externas são as que você usa de propósito: Anthropic/OpenAI/Google (os motores), WhatsApp (Evolution), e os downloads do instalador (Docker, NodeSource, claude.ai).
+
 ## Créditos
 Adaptado por [TorresHostLabs](https://github.com/TorresHostLabs) a partir do projeto original **Core OS**, de Felipe Tâmbara ([felipefernandees/core-os](https://github.com/felipefernandees/core-os)). Licença do original: própria (Felipe Tâmbara). Dependências: MIT (express, ws, xterm, node-pty prebuilt, marked).

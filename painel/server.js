@@ -405,6 +405,8 @@ function envLimpo(extra = {}) {
   // WHATS_PARA: pra quem vai o "me manda no zap" (quem falou pelo WhatsApp, ou o primeiro número autorizado)
   const env = { ...process.env, WHATS_PARA: acessoWhats().numeros[0] || '', ...extra };
   for (const k of Object.keys(env)) if (/^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_PID|CLAUDE_EFFORT|AI_AGENT|CORE_OS_PASSWORD|CORE_OS_HOOK_TOKEN)/.test(k)) delete env[k];
+  // sem telemetria nem relatório de erros nas conversas abertas pelo painel
+  env.DISABLE_TELEMETRY = '1'; env.DISABLE_ERROR_REPORTING = '1';
   return env;
 }
 
