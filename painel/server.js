@@ -81,7 +81,11 @@ const logado = (req) => {
 
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', 'loopback');
+// Atrás de um proxy (Traefik do Dokploy, Caddy): CORE_OS_TRUST_PROXY=1 (número de proxies na frente), 'loopback' ou uma lista de IPs/CIDR.
+// Sem isso, todo mundo chegaria com o IP do proxy (limite de tentativas de login compartilhado) e o cookie não sairia com Secure no HTTPS.
+// Não use se o painel também estiver acessível direto, sem o proxy: o X-Forwarded-For passaria a ser falsificável.
+const confiarProxy = String(process.env.CORE_OS_TRUST_PROXY ?? '').trim();
+app.set('trust proxy', !confiarProxy ? 'loopback' : /^\d+$/.test(confiarProxy) ? Number(confiarProxy) : confiarProxy);
 app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
   res.set({ 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
@@ -464,7 +468,7 @@ app.get('/api/primeiros-testes', (req, res) => res.json(PRIMEIROS_TESTES));
 const prefsMotor = () => ({ padrao: 'claude', whatsapp: 'claude', ...ler('motores.json', {}) });
 // O motor preferido só vale se estiver instalado/configurado neste servidor; senão usa o primeiro que estiver.
 // Assim, sem Claude Code mas com a chave da OpenAI, tudo (painel, WhatsApp, agendamentos) já roda pela OpenAI.
-const ORDEM_MOTORES = ['claude', 'openai', 'codex', 'antigravity'];
+const ORDEM_MOTORES = ['claude', 'codex', 'openai', 'antigravity']; // programas completos antes do agente de API
 function motorEfetivo(preferido) {
   const disp = disponiveis();
   if (disp[preferido]?.instalado) return preferido;

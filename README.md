@@ -24,6 +24,9 @@ Abra o Claude Code na VPS e cole:
 
 Ou à mão: `git clone https://github.com/TorresHostLabs/core-os /root/core-os && cd /root/core-os/skill && sudo bash instalar.sh --nome "Seu Nome"`.
 
+## Docker / Dokploy
+A imagem do painel é construída pelo GitHub Actions e publicada no GHCR (`ghcr.io/torreshostlabs/core-os`); o servidor só puxa a imagem pronta, sem compilar nada. Passo a passo, variáveis e o trecho do compose em [docs/dokploy.md](docs/dokploy.md).
+
 ## Como funciona
 - Cada conversa do painel é um `claude --session-id <id>` real num terminal (node-pty), na pasta do cérebro, com prompt de sistema apontando a nota `sessoes/<id>.md`.
 - O painel lê o registro do Claude Code (`~/.claude/projects/<pasta>/<id>.jsonl` e `<id>/subagents/*.meta.json`) pra mostrar a última ação e os subagentes.

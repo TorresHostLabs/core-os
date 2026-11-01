@@ -1,0 +1,11 @@
+.git
+.github
+.teste
+dist
+docs
+**/node_modules
+painel/data
+**/.DS_Store
+*.log
+Dockerfile
+.dockerignore
