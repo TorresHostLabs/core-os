@@ -483,6 +483,36 @@ async function atualizarEstado() {
 }
 
 // ---------- árvore ----------
+// ---------- busca nas notas ----------
+let buscaTimer = null; let buscaSeq = 0;
+function destacar(alvo, texto, de, ate) {
+  alvo.append(texto.slice(0, de));
+  const m = el('mark'); m.textContent = texto.slice(de, ate); alvo.append(m);
+  alvo.append(texto.slice(ate));
+}
+async function fazerBusca(q) {
+  const lista = $('#busca-lista'); const arv = $('#arvore-lista');
+  if (q.trim().length < 2) { lista.hidden = true; arv.hidden = false; return; }
+  const minha = ++buscaSeq;
+  let achados = [];
+  try { achados = await api(`/api/busca?q=${encodeURIComponent(q)}`); } catch { achados = []; }
+  if (minha !== buscaSeq) return; // chegou uma busca mais nova
+  arv.hidden = true; lista.hidden = false; lista.innerHTML = '';
+  if (!achados.length) { const v = el('div', 'busca-vazio'); v.textContent = 'Nada encontrado.'; lista.append(v); return; }
+  for (const r of achados) {
+    const b = el('button', 'achado'); b.type = 'button';
+    const nome = el('b'); nome.textContent = r.nome; b.append(nome);
+    const sub = el('small'); sub.textContent = r.caminho; b.append(sub);
+    for (const t of r.trechos) {
+      const x = el('span', 'trecho'); destacar(x, t.texto, t.de, t.ate); b.append(x);
+    }
+    b.addEventListener('click', () => abrirArquivo(r.caminho));
+    lista.append(b);
+  }
+}
+$('#busca')?.addEventListener('input', (e) => { clearTimeout(buscaTimer); buscaTimer = setTimeout(() => fazerBusca(e.target.value), 250); });
+$('#busca')?.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; fazerBusca(''); } });
+
 const abertas = new Set(recuperar('pastas', ['conteudo']));
 async function carregarArvore() {
   const dados = await api('/api/arvore');

@@ -472,3 +472,17 @@ img.selo-motor { width: 14px; height: 14px; padding: 0; border: 0; border-radius
 .comece-icone { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; color: #fff; background: var(--acento); }
 .comece-item:first-child .comece-icone, .comece-lista li:nth-child(-n+4) .comece-icone { background: #25d366; }
 .comece-icone svg.i { width: 15px; height: 15px; }
+
+/* busca nas notas */
+.busca-caixa { padding: 0 12px 8px; }
+.busca-caixa input { width: 100%; box-sizing: border-box; padding: 7px 10px; border-radius: 9px; border: 1px solid var(--borda, rgba(128,128,128,.25));
+  background: transparent; color: inherit; font: inherit; font-size: 13px; outline: none; }
+.busca-caixa input:focus { border-color: #0071e3; }
+.busca-lista[hidden] { display: none; }
+.achado { display: block; width: 100%; text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 7px 10px; border-radius: 8px; cursor: pointer; }
+.achado:hover, .achado:focus-visible { background: rgba(128,128,128,.14); outline: none; }
+.achado b { display: block; font-size: 13px; font-weight: 600; }
+.achado small { display: block; font-size: 11.5px; opacity: .6; margin-bottom: 2px; }
+.achado .trecho { display: block; font-size: 12px; opacity: .8; line-height: 1.4; overflow-wrap: anywhere; }
+.achado mark { background: rgba(255,200,0,.35); color: inherit; border-radius: 3px; padding: 0 1px; }
+.busca-vazio { padding: 14px 12px; font-size: 13px; opacity: .6; }

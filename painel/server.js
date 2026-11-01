@@ -144,6 +144,55 @@ function arvore(dir, rel = '', profundidade = 0) {
 
 app.get('/api/arvore', (req, res) => res.json(arvore(CFG.vault)));
 
+// ---------- busca nas notas ----------
+// minúsculas e sem acento, mantendo o mesmo tamanho do texto original (pra marcar o trecho achado)
+const plano = (t) => Array.from(String(t), (c) => {
+  const n = c.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  if (n.length === 1) return n;
+  const l = c.toLowerCase();
+  return l.length === c.length ? l : c;
+}).join('');
+const BUSCAVEL = /\.(md|txt)$/i;
+
+function buscar(consulta) {
+  const q = plano(consulta.trim());
+  const resultados = [];
+  let lidos = 0;
+  (function andar(lista) {
+    for (const n of lista) {
+      if (resultados.length >= 60 || lidos > 5000) return;
+      if (n.tipo === 'pasta') { andar(n.filhos); continue; }
+      if (!BUSCAVEL.test(n.nome)) continue;
+      let texto = '';
+      try {
+        const abs = path.join(CFG.vault, n.caminho);
+        if (fs.statSync(abs).size > 1_000_000) continue;
+        texto = fs.readFileSync(abs, 'utf8'); lidos++;
+      } catch { continue; }
+      const noNome = plano(n.nome).includes(q);
+      const trechos = [];
+      const linhas = texto.split('\n');
+      for (let i = 0; i < linhas.length && trechos.length < 3; i++) {
+        const pos = plano(linhas[i]).indexOf(q);
+        if (pos < 0) continue;
+        const ini = Math.max(0, pos - 50);
+        const corte = linhas[i].slice(ini, pos + q.length + 90);
+        trechos.push({ linha: i + 1, texto: (ini > 0 ? '…' : '') + corte, de: pos - ini + (ini > 0 ? 1 : 0), ate: pos - ini + (ini > 0 ? 1 : 0) + q.length });
+      }
+      if (noNome || trechos.length) resultados.push({ caminho: n.caminho, nome: n.nome, noNome, trechos });
+    }
+  })(arvore(CFG.vault));
+  // nome que bate vem primeiro
+  return resultados.sort((a, b) => Number(b.noNome) - Number(a.noNome));
+}
+
+app.get('/api/busca', (req, res) => {
+  const q = String(req.query.q || '');
+  if (q.trim().length < 2) return res.json([]);
+  if (q.length > 100) return res.status(400).json({ erro: 'Busca longa demais.' });
+  res.json(buscar(q));
+});
+
 app.get('/api/arquivo', (req, res) => {
   const real = dentroDoVault(req.query.caminho);
   if (!real || !fs.statSync(real).isFile()) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
