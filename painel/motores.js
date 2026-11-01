@@ -18,7 +18,7 @@ export const MOTORES = {
   codex: {
     nome: 'Codex',
     bin: process.env.CODEX_BIN || 'codex',
-    login: 'No terminal do servidor: codex login --device-auth (conta ChatGPT) ou OPENAI_API_KEY no /opt/core-os/.env.',
+    login: 'No terminal do servidor: codex login --device-auth (conta ChatGPT) ou printenv OPENAI_API_KEY | codex login --with-api-key (a variável sozinha não loga o Codex). No container do Docker, o painel faz esse login com a chave sozinho.',
   },
   openai: {
     nome: 'OpenAI (API)',

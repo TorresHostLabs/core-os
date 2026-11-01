@@ -25,6 +25,9 @@ Abra o Claude Code na VPS e cole:
 
 Ou à mão: `git clone https://github.com/TorresHostLabs/core-os /root/core-os && cd /root/core-os/skill && sudo bash instalar.sh --nome "Seu Nome"`.
 
+## Docker / Dokploy
+A imagem do painel é construída pelo GitHub Actions e publicada no GHCR (`ghcr.io/torreshostlabs/core-os`); o servidor só puxa a imagem pronta, sem compilar nada. Passo a passo, variáveis e o trecho do compose em [docs/dokploy.md](docs/dokploy.md).
+
 ## Instalar no Dokploy
 Alternativa ao `instalar.sh` para quem já tem o [Dokploy](https://dokploy.com) no servidor. O Dokploy já usa as portas 80/443 (Traefik) e 3000, então aqui tudo roda em containers (painel, n8n, Evolution, Postgres, Redis), sem Caddy, sem ufw e sem systemd. O motor padrão é o Codex (OpenAI). Os arquivos ficam em `dokploy/`.
 
@@ -57,7 +60,7 @@ O cérebro fica em `CORE_OS_CEREBRO` (padrão `../../files/cerebro`, a pasta per
 ## Como funciona
 - Cada conversa do painel é um `claude --session-id <id>` real num terminal (node-pty), na pasta do cérebro, com prompt de sistema apontando a nota `sessoes/<id>.md`.
 - O painel lê o registro do Claude Code (`~/.claude/projects/<pasta>/<id>.jsonl` e `<id>/subagents/*.meta.json`) pra mostrar a última ação e os subagentes.
-- Motor **OpenAI (API)** (`painel/openai.js`): agente próprio que chama a API da OpenAI (Chat Completions) em ciclo de ferramentas (listar, ler, buscar, escrever, editar), todas presas à pasta do cérebro; `.git`, `.claude/hooks` e `.env` não são graváveis. Sem terminal: a conversa é um chat no painel; também serve WhatsApp e agendamentos. Chave por `OPENAI_API_KEY` no `.env` ou pela tela (Configurações › OpenAI), testada antes de guardar. Modelo escolhido por você (lista da sua conta), limites de passos, de saída e diário de tokens, e contagem de uso. Comando de shell vem **desligado**; ligar dá ao agente o mesmo poder do painel. `OPENAI_BASE_URL` aponta pra outro endpoint compatível.
+- Motor **OpenAI (API)** (`painel/openai.js`): agente próprio que chama a API da OpenAI (Chat Completions) em ciclo de ferramentas (listar, ler, buscar, escrever, editar), todas presas à pasta do cérebro; `.git`, `.claude/hooks` e `.env` não são graváveis. Sem terminal: a conversa é um chat no painel; também serve WhatsApp e agendamentos. Chave por `OPENAI_API_KEY` no `.env` ou pela tela (Configurações › OpenAI), testada antes de guardar. Modelo escolhido por você (lista da sua conta), limites de passos, de saída e diário de tokens, e contagem de uso. Resposta em **streaming** (o texto chega palavra por palavra; cai sozinho pro modo normal se o servidor não suportar, e dá pra desligar na tela). O prompt de sistema é estável (a hora vai na mensagem do dono), o que deixa o **cache automático** da OpenAI valer; os tokens em cache aparecem na tela de uso. Comando de shell vem **desligado**; ligar dá ao agente o mesmo poder do painel. `OPENAI_BASE_URL` aponta pra outro endpoint compatível.
 - Agendamentos (dock › relógio): tarefas com horário (todo dia, dias da semana ou a cada N tempo, fuso de Brasília) rodam sozinhas com `claude -p`, uma por vez, e viram conversas `Agendado · nome` no painel; opcionalmente o resultado vai pro WhatsApp. Ficam em `dados/agendamentos.json`. Execução atrasada em mais de 2h (painel fora do ar) é pulada.
 - Backup (dock › disco): `.tar.gz` da pasta do cérebro (sem `node_modules` e `.trash`). "Baixar agora" gera em streaming direto pro seu computador; "Criar backup no servidor" e o automático diário guardam em `dados/backups/` e mantêm só os N mais recentes. Restaurar é manual (`tar -xzf`).
 - Arquivo de mídia novo em `conteudo/` vira card da conversa que estava ativa.
