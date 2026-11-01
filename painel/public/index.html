@@ -50,6 +50,7 @@
       <button data-acao="grafo" data-dica="Grafo"></button>
       <button data-acao="nova-conversa" data-dica="Nova conversa"></button>
       <button data-acao="conteudos" data-dica="Conteúdos"></button>
+      <button data-acao="agenda" data-dica="Agendamentos"></button>
       <span class="dock-separador"></span>
       <button data-acao="centralizar" data-dica="Centralizar"></button>
       <button data-acao="tema" data-dica="Tema"></button>
@@ -80,6 +81,17 @@
           <button class="icone-botao" data-acao="fechar-config" title="Fechar"></button>
         </header>
         <div id="config-corpo" class="config-corpo"></div>
+      </div>
+    </section>
+
+    <section id="folha-agenda" class="folha" hidden>
+      <div class="folha-fundo" data-acao="fechar-agenda"></div>
+      <div class="folha-corpo folha-estreita">
+        <header class="folha-topo">
+          <div><h2>Agendamentos</h2><p>Tarefas que o seu cérebro faz sozinho, no horário que você escolher (Brasília).</p></div>
+          <button class="icone-botao" data-acao="fechar-agenda" title="Fechar"></button>
+        </header>
+        <div id="agenda-corpo" class="config-corpo"></div>
       </div>
     </section>
 

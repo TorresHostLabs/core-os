@@ -500,3 +500,25 @@ img.selo-motor { width: 14px; height: 14px; padding: 0; border: 0; border-radius
 .editor-link { background: none; border: 0; padding: 0; color: #0071e3; font: inherit; text-decoration: underline; cursor: pointer; }
 .botao-salvar { background: #0071e3; color: #fff; }
 .botao-salvar:disabled { opacity: .5; }
+
+/* agendamento de tarefas */
+.selo-agenda { background: var(--acento); }
+.agenda-lista { display: grid; gap: 14px; }
+.agenda-topo { display: flex; justify-content: flex-end; }
+.agenda-item.pausada { opacity: .65; }
+.agenda-prompt { margin: 0; font-size: 13px; color: var(--texto-2); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 4.8em; overflow: hidden; }
+.agenda-resumo { margin: 0; font-size: 12px; padding: 8px 10px; border-radius: 10px; background: var(--hover); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 7.5em; overflow: auto; }
+.agenda-form { gap: 12px; }
+.agenda-form label { display: grid; gap: 5px; font-size: 12.5px; font-weight: 550; color: var(--texto-2); }
+.agenda-form input:not([type=checkbox]), .agenda-form textarea, .agenda-form select { box-sizing: border-box; width: 100%; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--linha); background: transparent; color: var(--texto, inherit); font: inherit; font-size: 13.5px; outline: none; }
+.agenda-form textarea { resize: vertical; }
+.agenda-form input:focus, .agenda-form textarea:focus, .agenda-form select:focus { border-color: var(--acento); }
+.agenda-linha { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; align-items: end; }
+.agenda-par { display: grid; grid-template-columns: 90px 1fr; gap: 8px; }
+.agenda-dias { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.agenda-dias label, .agenda-form .agenda-check { display: flex; align-items: center; gap: 6px; font-weight: 500; }
+.agenda-form[data-tipo="diaria"] .so-intervalo, .agenda-form[data-tipo="diaria"] .so-semanal,
+.agenda-form[data-tipo="semanal"] .so-intervalo, .agenda-form[data-tipo="intervalo"] .so-horario, .agenda-form[data-tipo="intervalo"] .so-semanal { display: none; }
+.agenda-form[data-tipo="semanal"] .so-semanal { display: flex; }
+.botao-leve.botao-salvar:hover { background: #0a84ff; color: #fff; }

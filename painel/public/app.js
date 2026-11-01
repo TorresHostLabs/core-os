@@ -43,6 +43,7 @@ const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const url = (caminho) => `/api/arquivo?caminho=${encodeURIComponent(caminho)}`;
+const semTela = (c) => c.origem === 'whatsapp' || c.origem === 'agendamento'; // conversa que rodou sem terminal: card de histórico
 const tipoDe = (c) => (/\.(png|jpe?g|webp|gif|svg)$/i.test(c) ? 'imagem' : /\.(mp4|mov|webm|m4v)$/i.test(c) ? 'video' : /\.(md|txt|json|sh|js|csv|canvas)$/i.test(c) ? 'texto' : 'outro');
 const nomeDe = (c) => c.split('/').pop();
 const guardar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* */ } };
@@ -378,7 +379,7 @@ function desenharEspaco() {
       mundo.append(bv);
     }
   } else {
-    if (conv.origem === 'whatsapp' && !assumidas.has(conv.id)) cardHistorico(conv); else cardTerminal(conv);
+    if (semTela(conv) && !assumidas.has(conv.id)) cardHistorico(conv); else cardTerminal(conv);
     desenharFilhos(conv);
   }
   for (const c of e.abertos) cardArquivo(c, 0, 0);
@@ -469,7 +470,7 @@ function pintarConversas() {
     const ordenados = [...pendentes, ...itens.filter((i) => i.feito)];
     bloco.innerHTML = `
       <div class="conversa-cabeca"><span class="ponto ${c.trabalhando ? 'trabalhando' : c.ativo ? 'ativo' : ''}"></span>
-        ${c.origem === 'whatsapp' ? `<span class="selo-whats" title="Veio do WhatsApp">${ic('zap')}</span>` : ''}<span class="card-titulo">${esc(c.titulo)}</span><img class="selo-motor" src="/logos/${esc(c.motor || 'claude')}.svg" alt="${esc(c.motorNome || 'Claude Code')}" title="${esc(c.motorNome || 'Claude Code')}">${itens.length ? `<span class="conversa-progresso">${feitos}/${itens.length}</span>` : ''}</div>
+        ${c.origem === 'whatsapp' ? `<span class="selo-whats" title="Veio do WhatsApp">${ic('zap')}</span>` : c.origem === 'agendamento' ? `<span class="selo-whats selo-agenda" title="Tarefa agendada">${ic('relogio')}</span>` : ''}<span class="card-titulo">${esc(c.titulo)}</span><img class="selo-motor" src="/logos/${esc(c.motor || 'claude')}.svg" alt="${esc(c.motorNome || 'Claude Code')}" title="${esc(c.motorNome || 'Claude Code')}">${itens.length ? `<span class="conversa-progresso">${feitos}/${itens.length}</span>` : ''}</div>
       <div class="conversa-corpo"><div><div class="conversa-interno">
         ${resumo ? `<p class="resumo">${esc(resumo)}</p>` : `<p class="resumo">${c.nota ? '' : 'O resumo e as ações aparecem aqui assim que o agente criar a nota de status.'}</p>`}
         ${ordenados.length ? `<div class="secao-mini">${pendentes.length ? `${pendentes.length} pendente${pendentes.length > 1 ? 's' : ''}` : 'Tudo feito'}</div>
@@ -533,7 +534,7 @@ async function atualizarEstado() {
   const antes = JSON.stringify(S.conversas.map((c) => [c.id, c.motor, c.titulo, c.nota, c.trabalhando, c.ativo, c.ultimaAcao, c.subagentes, c.midias]));
   S.conversas = await api('/api/estado');
   const ativa = S.conversas.find((c) => c.id === S.ativa);
-  if (ativa?.origem === 'whatsapp' && !assumidas.has(ativa.id)) pintarHistorico(ativa).catch(() => {});
+  if (ativa && semTela(ativa) && !assumidas.has(ativa.id)) pintarHistorico(ativa).catch(() => {});
   const depois = JSON.stringify(S.conversas.map((c) => [c.id, c.motor, c.titulo, c.nota, c.trabalhando, c.ativo, c.ultimaAcao, c.subagentes, c.midias]));
   if (antes === depois) return;
   pintarConversas();
@@ -541,7 +542,7 @@ async function atualizarEstado() {
   if (conv) {
     desenharFilhos(conv);
     const titulo = mundo.querySelector('.card[data-chave="terminal"] .card-titulo');
-    if (titulo) titulo.innerHTML = `${esc(conv.titulo)} <span class="card-sub">${conv.origem === 'whatsapp' && !assumidas.has(conv.id) ? 'WhatsApp' : esc(conv.motorNome || 'Claude Code')}</span>`;
+    if (titulo) titulo.innerHTML = `${esc(conv.titulo)} <span class="card-sub">${semTela(conv) && !assumidas.has(conv.id) ? (conv.origem === 'agendamento' ? 'Agendado' : 'WhatsApp') : esc(conv.motorNome || 'Claude Code')}</span>`;
     desenharLigacoes();
   }
 }
@@ -771,13 +772,14 @@ async function abrir(caminho) {
 // ---------- dock e ações ----------
 const aberta = (q) => (q === 'arvore' ? !$('#arvore').classList.contains('fechado') : false);
 function pintarDock() {
-  const icones = { arvore: 'arvore', grafo: 'grafo', config: 'engrenagem', 'nova-conversa': 'conversaNova', conteudos: 'grade', centralizar: 'mira', sair: 'sair',
+  const icones = { arvore: 'arvore', grafo: 'grafo', config: 'engrenagem', 'nova-conversa': 'conversaNova', conteudos: 'grade', agenda: 'relogio', centralizar: 'mira', sair: 'sair',
     tema: document.documentElement.dataset.tema === 'escuro' ? 'sol' : 'lua' };
   document.querySelectorAll('#dock button').forEach((b) => { b.innerHTML = ic(icones[b.dataset.acao]); });
   $('#dock [data-acao="arvore"]')?.classList.toggle('ligado', !$('#arvore')?.classList.contains('fechado'));
   $('#dock [data-acao="conteudos"]')?.classList.toggle('ligado', !$('#folha-conteudos')?.hidden);
   $('#dock [data-acao="grafo"]')?.classList.toggle('ligado', !$('#grafo')?.hidden);
   $('#dock [data-acao="config"]')?.classList.toggle('ligado', !$('#folha-config')?.hidden);
+  $('#dock [data-acao="agenda"]')?.classList.toggle('ligado', !$('#folha-agenda')?.hidden);
 }
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-acao]');
@@ -800,6 +802,8 @@ document.addEventListener('click', async (e) => {
   if (a === 'recarregar-arvore') carregarArvore();
   if (a === 'grafo') (Grafo.aberto ? Grafo.fechar() : Grafo.abrir());
   if (a === 'config') abrirConfig();
+  if (a === 'agenda') abrirAgenda();
+  if (a === 'fechar-agenda') fecharAgenda();
   if (a === 'fechar-config') fecharConfig();
   if (a === 'whats-conectar') conectarWhats(b);
   if (a === 'motor') api('/api/config/motores', { method: 'POST', body: JSON.stringify({ [b.dataset.campo]: b.dataset.valor }) }).then(pintarConfig);
@@ -817,6 +821,7 @@ document.addEventListener('keydown', (e) => {
   else if (!$('#escolher-motor').hidden) fecharSeletor();
   else if (!$('#folha-conteudos').hidden) fecharConteudos();
   else if (!$('#folha-config').hidden) fecharConfig();
+  else if (!$('#folha-agenda').hidden) fecharAgenda();
   else if (Grafo.aberto) Grafo.fechar();
 });
 
@@ -967,6 +972,117 @@ async function tickConfig() {
   if ($('#acesso-novo')?.value) return;
   await pintarConfig();
 }
+// ---------- agendamento de tarefas ----------
+const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const quandoBR = (ms) => new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+function descreverFreq(f) {
+  if (f.tipo === 'diaria') return `Todo dia às ${f.hora}`;
+  if (f.tipo === 'semanal') return `${f.dias.map((d) => DIAS_SEMANA[d]).join(', ')} às ${f.hora}`;
+  const n = f.minutos;
+  if (n % 1440 === 0) return `A cada ${n / 1440} dia${n / 1440 > 1 ? 's' : ''}`;
+  if (n % 60 === 0) return `A cada ${n / 60} h`;
+  return `A cada ${n} min`;
+}
+let agendaLista = []; let agendaEdicao = null; // agendaEdicao: id | 'novo' | null
+async function abrirAgenda() {
+  const corpo = $('#agenda-corpo');
+  if (!corpo.firstElementChild) corpo.innerHTML = '<div id="agenda-form"></div><div id="agenda-lista" class="agenda-lista"></div>';
+  $('#folha-agenda').hidden = false; pintarDock();
+  await pintarAgenda();
+  clearInterval(abrirAgenda.t);
+  abrirAgenda.t = setInterval(() => { if ($('#folha-agenda').hidden) clearInterval(abrirAgenda.t); else pintarAgenda().catch(() => {}); }, 5000);
+}
+function fecharAgenda() { $('#folha-agenda').hidden = true; clearInterval(abrirAgenda.t); agendaEdicao = null; pintarDock(); }
+async function pintarAgenda() {
+  agendaLista = await api('/api/agendamentos');
+  const raiz = $('#agenda-lista');
+  if (!raiz) return;
+  const topo = agendaEdicao ? '' : '<div class="agenda-topo"><button class="botao-leve botao-salvar" data-agenda="novo" type="button">+ Nova tarefa</button></div>';
+  raiz.innerHTML = topo + (agendaLista.length ? agendaLista.map((a) => {
+    const u = a.ultima;
+    return `<article class="config-cartao agenda-item ${a.ativo ? '' : 'pausada'}" data-id="${esc(a.id)}">
+      <div class="config-cabeca"><span class="config-icone azul">${ic('relogio')}</span>
+        <div class="config-titulo"><b>${esc(a.nome)}</b><span>${esc(descreverFreq(a.freq))}${a.enviarWhats ? ' · avisa no WhatsApp' : ''}</span></div>
+        <span class="pilula ${a.naFila ? 'trabalhando' : a.ativo ? 'conectado' : ''}">${a.naFila ? 'Rodando…' : a.ativo ? 'Ativa' : 'Pausada'}</span></div>
+      <p class="agenda-prompt"></p>
+      <dl class="config-linhas">
+        <div><dt>Próxima</dt><dd>${a.proxima ? esc(quandoBR(a.proxima)) : '—'}</dd></div>
+        <div><dt>Última</dt><dd>${u ? `${esc(quandoBR(u.quando))} · ${u.ok ? 'ok' : '<span style="color:#ff3b30">falhou</span>'}` : 'ainda não rodou'}</dd></div>
+      </dl>
+      ${u?.resumo ? '<p class="agenda-resumo"></p>' : ''}
+      <div class="config-botoes">
+        <button class="botao-leve" data-agenda="executar" type="button" ${a.naFila ? 'disabled' : ''}>Executar agora</button>
+        <button class="botao-leve" data-agenda="alternar" type="button">${a.ativo ? 'Pausar' : 'Ativar'}</button>
+        <button class="botao-leve" data-agenda="editar" type="button">Editar</button>
+        <button class="botao-leve" data-agenda="excluir" type="button">Excluir</button>
+      </div></article>`;
+  }).join('') : '<p class="config-dica">Nenhuma tarefa agendada ainda. Crie uma pra o seu cérebro trabalhar sozinho (um resumo diário, um lembrete, uma checagem).</p>');
+  // textos livres entram como texto, nunca como HTML
+  raiz.querySelectorAll('.agenda-item').forEach((n) => {
+    const a = agendaLista.find((x) => x.id === n.dataset.id);
+    n.querySelector('.agenda-prompt').textContent = a.prompt;
+    const r = n.querySelector('.agenda-resumo'); if (r) r.textContent = a.ultima.resumo;
+  });
+}
+function formAgenda(ag) {
+  const f = ag?.freq || { tipo: 'diaria', hora: '08:00' };
+  const unid = f.tipo === 'intervalo' ? (f.minutos % 1440 === 0 ? 1440 : f.minutos % 60 === 0 ? 60 : 1) : 60;
+  const form = el('form', 'config-cartao agenda-form');
+  form.dataset.tipo = f.tipo;
+  form.innerHTML = `
+    <label>Nome<input name="nome" maxlength="80" required placeholder="Ex.: Resumo da manhã"></label>
+    <label>O que o cérebro deve fazer<textarea name="prompt" rows="4" maxlength="4000" required placeholder="Ex.: Resuma as notas que mudaram ontem e liste 3 prioridades pra hoje."></textarea></label>
+    <div class="agenda-linha">
+      <label>Quando<select name="tipo"><option value="diaria">Todo dia</option><option value="semanal">Em dias da semana</option><option value="intervalo">De tempos em tempos</option></select></label>
+      <label class="so-horario">Horário (Brasília)<input type="time" name="hora" required></label>
+      <label class="so-intervalo">A cada<span class="agenda-par"><input type="number" name="n" min="1" max="10080" step="1"><select name="unid"><option value="1">minutos</option><option value="60">horas</option><option value="1440">dias</option></select></span></label>
+    </div>
+    <div class="agenda-dias so-semanal">${DIAS_SEMANA.map((d, i) => `<label><input type="checkbox" name="dia" value="${i}"> ${d}</label>`).join('')}</div>
+    <label class="agenda-check"><input type="checkbox" name="whats"> Mandar o resultado no WhatsApp</label>
+    <p class="login-erro" role="alert"></p>
+    <div class="config-botoes"><button type="submit" class="botao-leve botao-salvar">Salvar</button><button type="button" class="botao-leve" data-agenda="cancelar">Cancelar</button></div>`;
+  form.nome.value = ag?.nome || ''; form.prompt.value = ag?.prompt || '';
+  form.tipo.value = f.tipo; form.hora.value = f.hora || '08:00';
+  form.n.value = f.tipo === 'intervalo' ? f.minutos / unid : 1; form.unid.value = String(unid);
+  form.querySelectorAll('[name=dia]').forEach((c) => { c.checked = (f.dias || []).includes(Number(c.value)); });
+  form.whats.checked = Boolean(ag?.enviarWhats);
+  form.tipo.addEventListener('change', () => { form.dataset.tipo = form.tipo.value; });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const erro = form.querySelector('.login-erro'); erro.textContent = '';
+    const tipo = form.tipo.value;
+    const freq = tipo === 'intervalo' ? { tipo, minutos: Math.round(Number(form.n.value) * Number(form.unid.value)) }
+      : tipo === 'semanal' ? { tipo, hora: form.hora.value, dias: [...form.querySelectorAll('[name=dia]:checked')].map((c) => Number(c.value)) }
+        : { tipo, hora: form.hora.value };
+    const corpo = { nome: form.nome.value, prompt: form.prompt.value, freq, enviarWhats: form.whats.checked };
+    const edit = agendaEdicao && agendaEdicao !== 'novo';
+    const r = await fetch(edit ? `/api/agendamentos/${agendaEdicao}` : '/api/agendamentos', { method: edit ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+    if (r.status === 401) return mostrarLogin();
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { erro.textContent = j.erro || 'Não consegui salvar.'; return; }
+    agendaEdicao = null; $('#agenda-form').innerHTML = ''; pintarAgenda();
+  });
+  return form;
+}
+function mostrarFormAgenda(ag) {
+  agendaEdicao = ag ? ag.id : 'novo';
+  const f = $('#agenda-form'); f.innerHTML = ''; f.append(formAgenda(ag));
+  f.querySelector('[name=nome]').focus();
+  pintarAgenda();
+}
+$('#folha-agenda')?.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-agenda]'); if (!b) return;
+  const id = b.closest('.agenda-item')?.dataset.id; const ag = agendaLista.find((x) => x.id === id);
+  const acao = b.dataset.agenda;
+  if (acao === 'novo') return mostrarFormAgenda(null);
+  if (acao === 'cancelar') { agendaEdicao = null; $('#agenda-form').innerHTML = ''; return pintarAgenda(); }
+  if (acao === 'editar' && ag) return mostrarFormAgenda(ag);
+  if (acao === 'alternar' && ag) await api(`/api/agendamentos/${id}`, { method: 'PUT', body: JSON.stringify({ ativo: !ag.ativo }) });
+  if (acao === 'executar' && ag) { b.disabled = true; await api(`/api/agendamentos/${id}/executar`, { method: 'POST' }); }
+  if (acao === 'excluir' && ag && confirm(`Excluir a tarefa "${ag.nome}"? As conversas que ela já gerou continuam no painel.`)) await api(`/api/agendamentos/${id}`, { method: 'DELETE' });
+  pintarAgenda();
+});
+
 function fecharConfig() { $('#folha-config').hidden = true; qrAtual = null; qrVencido = false; pintarDock(); }
 async function pintarConfig() {
   const [cfg, mot, ext] = await Promise.all([api('/api/config'), api('/api/config/motores'), api('/api/extras')]);

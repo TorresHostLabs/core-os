@@ -621,7 +621,7 @@ app.get('/api/estado', (req, res) => {
   res.json(conversas.filter((c) => !c.arquivada).map((c) => {
     const reg = registroDe(c);
     const nota = lerNota(c.id);
-    const padrao = c.origem === 'whatsapp'
+    const padrao = c.origem === 'agendamento' ? `Agendado · ${c.tituloFixo || 'tarefa'}` : c.origem === 'whatsapp'
       ? `WhatsApp · ${new Date(c.criada).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
       : `Conversa ${c.numero}`;
     const titulo = nota.match(/^#\s+(.+)$/m)?.[1]?.trim() || padrao;
@@ -742,10 +742,10 @@ function marcarWhats(para, conversa) {
   gravar('whatsapp.json', todos);
 }
 
-async function rodarClaude(conv, texto, para) {
+async function rodarClaude(conv, texto, para, instrucoes = PROMPT_WHATS) {
   const jaTemClaude = fs.existsSync(path.join(PROJETOS, `${conv.id}.jsonl`));
   const { resposta, sessao } = await rodarSemTela(conv, texto, {
-    prompt: `${promptSistema(conv.id)} ${PROMPT_WHATS}`, env: envLimpo({ CORE_OS_SESSAO: conv.id, WHATS_PARA: para || '' }), cwd: CFG.vault, jaTemClaude,
+    prompt: `${promptSistema(conv.id)} ${instrucoes}`, env: envLimpo({ CORE_OS_SESSAO: conv.id, WHATS_PARA: para || '' }), cwd: CFG.vault, jaTemClaude,
   });
   if (sessao && !conv.sessaoMotor) conv.sessaoMotor = sessao;
   if (motorDe(conv) === 'antigravity') {
@@ -806,6 +806,145 @@ async function responderWhats(texto, para) {
     if (!r.ok) console.error('[whatsapp] Evolution recusou a resposta:', r.status, (await r.text()).slice(0, 200));
   } catch (e) { console.error('[whatsapp] falhou ao responder:', e.message); }
 }
+
+// ---------- agendamento de tarefas ----------
+// Cada tarefa é um prompt que roda sozinho no horário (fuso de Brasília), sem terminal, e vira uma conversa do painel
+// (origem: agendamento). Uma por vez; se o painel ficou fora do ar, execução atrasada em mais de 2h é pulada.
+const FUSO = 'America/Sao_Paulo';
+const MAX_AGENDAMENTOS = 30;
+const PROMPT_AGENDA = [
+  'Esta é uma tarefa agendada: roda sozinha, ninguém está acompanhando agora e não dá pra fazer perguntas.',
+  'Faça o que o prompt pede com o que você tem e termine com um resultado final curto e direto (ele aparece no painel e, se configurado, vai por WhatsApp).',
+  'Se faltar informação, diga o que faltou em vez de perguntar.',
+].join(' ');
+let agendamentos = ler('agendamentos.json', []);
+const salvarAgendamentos = () => gravar('agendamentos.json', agendamentos);
+
+function partesNoFuso(ms) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: FUSO, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short' })
+    .formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return { ano: +p.year, mes: +p.month, dia: +p.day, hora: +p.hour, min: +p.minute, dow: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(p.weekday) };
+}
+// instante (ms) em que o relógio de Brasília marca ano-mes-dia hora:min
+function instanteNoFuso(ano, mes, dia, hora, min) {
+  const alvo = Date.UTC(ano, mes - 1, dia, hora, min);
+  let t = alvo;
+  for (let i = 0; i < 2; i++) { const q = partesNoFuso(t); t -= Date.UTC(q.ano, q.mes - 1, q.dia, q.hora, q.min) - alvo; }
+  return t;
+}
+function proximaExecucao(freq, de) {
+  if (freq.tipo === 'intervalo') return de + freq.minutos * 60_000;
+  const [h, m] = freq.hora.split(':').map(Number);
+  const base = partesNoFuso(de);
+  for (let i = 0; i < 9; i++) {
+    const d = new Date(Date.UTC(base.ano, base.mes - 1, base.dia + i));
+    if (freq.tipo === 'semanal' && !freq.dias.includes((base.dow + i) % 7)) continue;
+    const t = instanteNoFuso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h, m);
+    if (t > de) return t;
+  }
+  return de + 24 * 3600_000;
+}
+
+function validarAgenda(b) {
+  const nome = String(b.nome ?? '').trim(); const prompt = String(b.prompt ?? '').trim();
+  if (!nome || nome.length > 80) return { erro: 'Dê um nome de até 80 caracteres.' };
+  if (!prompt || prompt.length > 4000) return { erro: 'O pedido precisa ter entre 1 e 4000 caracteres.' };
+  const f = b.freq || {}; let freq;
+  if (f.tipo === 'diaria' || f.tipo === 'semanal') {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(f.hora))) return { erro: 'Horário inválido.' };
+    freq = { tipo: f.tipo, hora: f.hora };
+    if (f.tipo === 'semanal') {
+      const dias = [...new Set((Array.isArray(f.dias) ? f.dias : []).map(Number))].filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort();
+      if (!dias.length) return { erro: 'Escolha pelo menos um dia da semana.' };
+      freq.dias = dias;
+    }
+  } else if (f.tipo === 'intervalo') {
+    const minutos = Number(f.minutos);
+    if (!Number.isInteger(minutos) || minutos < 15 || minutos > 10080) return { erro: 'O intervalo vai de 15 minutos a 7 dias.' };
+    freq = { tipo: 'intervalo', minutos };
+  } else return { erro: 'Frequência inválida.' };
+  return { valor: { nome, prompt, freq, enviarWhats: Boolean(b.enviarWhats), ativo: b.ativo !== false } };
+}
+const publicaAgenda = (a) => ({ id: a.id, nome: a.nome, prompt: a.prompt, freq: a.freq, enviarWhats: a.enviarWhats, ativo: a.ativo,
+  proxima: a.ativo ? a.proxima || null : null, ultima: a.ultima || null, naFila: naFilaAgenda.has(a.id) });
+
+const filaAgenda = []; const naFilaAgenda = new Set(); let agendaOcupada = false;
+function enfileirarAgenda(id) {
+  if (naFilaAgenda.has(id)) return false;
+  naFilaAgenda.add(id); filaAgenda.push(id); processarAgenda();
+  return true;
+}
+async function processarAgenda() {
+  if (agendaOcupada) return;
+  const id = filaAgenda.shift();
+  if (!id) return;
+  agendaOcupada = true;
+  try { const ag = agendamentos.find((a) => a.id === id); if (ag) await executarAgendamento(ag); }
+  catch (e) { console.error('[agenda]', e); }
+  finally { naFilaAgenda.delete(id); agendaOcupada = false; setImmediate(processarAgenda); }
+}
+async function executarAgendamento(ag) {
+  const para = acessoWhats().numeros[0] || '';
+  const conv = criarConversa({ origem: 'agendamento', agendamento: ag.id, tituloFixo: ag.nome, motor: prefsMotor().padrao });
+  conv.processando = true; salvarConversas();
+  let resposta = ''; let ok = true;
+  try { resposta = await rodarClaude(conv, ag.prompt, para, PROMPT_AGENDA); }
+  catch (e) { ok = false; resposta = String(e.message || e); }
+  finally { conv.processando = false; conv.ultimaAtividade = Date.now(); salvarConversas(); }
+  if (/^Não consegui abrir/.test(resposta)) ok = false;
+  const atual = agendamentos.find((a) => a.id === ag.id);
+  if (atual) { atual.ultima = { quando: Date.now(), conversa: conv.id, ok, resumo: resposta.slice(0, 300) }; salvarAgendamentos(); }
+  if (ag.enviarWhats) await responderWhats(`*${ag.nome}*\n${resposta.slice(0, 3400) || 'Feito.'}`, para);
+}
+function tickAgenda() {
+  const agora = Date.now(); let mudou = false;
+  for (const ag of agendamentos) {
+    if (!ag.ativo) continue;
+    if (!ag.proxima) { ag.proxima = proximaExecucao(ag.freq, agora); mudou = true; continue; }
+    if (ag.proxima <= agora) {
+      const atraso = agora - ag.proxima;
+      ag.proxima = proximaExecucao(ag.freq, agora); mudou = true;
+      if (atraso < 2 * 3600_000) enfileirarAgenda(ag.id);
+    }
+  }
+  if (mudou) salvarAgendamentos();
+}
+setInterval(tickAgenda, 30_000);
+setTimeout(tickAgenda, 5_000);
+
+app.get('/api/agendamentos', (req, res) => res.json(agendamentos.map(publicaAgenda)));
+app.post('/api/agendamentos', (req, res) => {
+  if (agendamentos.length >= MAX_AGENDAMENTOS) return res.status(400).json({ erro: `Limite de ${MAX_AGENDAMENTOS} agendamentos.` });
+  const v = validarAgenda(req.body || {});
+  if (v.erro) return res.status(400).json(v);
+  const ag = { id: crypto.randomUUID(), criado: Date.now(), ...v.valor };
+  ag.proxima = ag.ativo ? proximaExecucao(ag.freq, Date.now()) : null;
+  agendamentos.push(ag); salvarAgendamentos();
+  res.status(201).json(publicaAgenda(ag));
+});
+app.put('/api/agendamentos/:id', (req, res) => {
+  const ag = agendamentos.find((a) => a.id === req.params.id);
+  if (!ag) return res.status(404).json({ erro: 'Agendamento não encontrado.' });
+  const v = validarAgenda({ ...ag, ...(req.body || {}) });
+  if (v.erro) return res.status(400).json(v);
+  const mudouHorario = JSON.stringify(v.valor.freq) !== JSON.stringify(ag.freq) || (v.valor.ativo && !ag.ativo);
+  Object.assign(ag, v.valor);
+  if (!ag.ativo) ag.proxima = null; else if (mudouHorario || !ag.proxima) ag.proxima = proximaExecucao(ag.freq, Date.now());
+  salvarAgendamentos();
+  res.json(publicaAgenda(ag));
+});
+app.delete('/api/agendamentos/:id', (req, res) => {
+  const i = agendamentos.findIndex((a) => a.id === req.params.id);
+  if (i < 0) return res.status(404).json({ erro: 'Agendamento não encontrado.' });
+  agendamentos.splice(i, 1); salvarAgendamentos();
+  res.json({ ok: true });
+});
+app.post('/api/agendamentos/:id/executar', (req, res) => {
+  const ag = agendamentos.find((a) => a.id === req.params.id);
+  if (!ag) return res.status(404).json({ erro: 'Agendamento não encontrado.' });
+  if (!enfileirarAgenda(ag.id)) return res.status(409).json({ erro: 'Essa tarefa já está na fila ou rodando.' });
+  res.status(202).json({ ok: true });
+});
 
 // ---------- estáticos ----------
 const vendor = (p) => path.join(AQUI, 'node_modules', p);
