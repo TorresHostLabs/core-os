@@ -50,13 +50,32 @@ const ler = (n, padrao) => { try { return JSON.parse(fs.readFileSync(arq(n), 'ut
 const gravar = (n, v) => fs.writeFileSync(arq(n), JSON.stringify(v, null, 2));
 
 // ---------- autenticação ----------
-const sessoesLogin = new Set(ler('logins.json', []));
-const falhas = new Map(); // ip -> [timestamps]
+const VALIDADE_LOGIN = 30 * 24 * 3600 * 1000;
 const hash = (s) => crypto.createHash('sha256').update(String(s)).digest();
-function cookies(req) {
-  return Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((p) => p[0]));
+const hashHex = (s) => hash(s).toString('hex');
+// guarda só o hash do token (nunca o token) e a data de validade; aceita o formato antigo (lista de tokens)
+const sessoesLogin = new Map();
+for (const item of ler('logins.json', [])) {
+  if (typeof item === 'string') sessoesLogin.set(hashHex(item), Date.now() + VALIDADE_LOGIN);
+  else if (item?.h && item.ate > Date.now()) sessoesLogin.set(item.h, item.ate);
 }
-const logado = (req) => sessoesLogin.has(cookies(req).coreos || '');
+const salvarLogins = () => gravar('logins.json', [...sessoesLogin].map(([h, ate]) => ({ h, ate })).slice(-50));
+const falhas = new Map(); // ip -> [timestamps]
+setInterval(() => { // não deixa o mapa de falhas crescer sem fim
+  const agora = Date.now();
+  for (const [ip, ts] of falhas) if (!ts.some((t) => agora - t < 60_000)) falhas.delete(ip);
+  for (const [h, ate] of sessoesLogin) if (ate < agora) sessoesLogin.delete(h);
+}, 600_000).unref();
+function cookies(req) {
+  return Object.fromEntries((req.headers.cookie || '').split(';').map((c) => {
+    const i = c.indexOf('=');
+    return i < 0 ? [] : [c.slice(0, i).trim(), c.slice(i + 1).trim()];
+  }).filter((p) => p[0]));
+}
+const logado = (req) => {
+  const ate = sessoesLogin.get(hashHex(cookies(req).coreos || ''));
+  return Boolean(ate && ate > Date.now());
+};
 
 const app = express();
 app.disable('x-powered-by');
@@ -64,6 +83,8 @@ app.set('trust proxy', 'loopback');
 app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
   res.set({ 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
+  // arquivos do cérebro são conteúdo não confiável: sem script mesmo se abertos direto (SVG/HTML)
+  if (req.path === '/api/arquivo' || req.path === '/api/capa') res.set('Content-Security-Policy', "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'");
   next();
 });
 
@@ -77,16 +98,16 @@ app.post('/api/login', (req, res) => {
     return res.status(401).json({ erro: 'Senha errada.' });
   }
   const token = crypto.randomBytes(32).toString('hex');
-  sessoesLogin.add(token);
-  gravar('logins.json', [...sessoesLogin].slice(-50));
+  sessoesLogin.set(hashHex(token), Date.now() + VALIDADE_LOGIN);
+  salvarLogins();
   const seguro = req.secure ? '; Secure' : '';
   res.set('Set-Cookie', `coreos=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${seguro}`);
   res.json({ ok: true });
 });
 
 app.post('/api/logout', (req, res) => {
-  sessoesLogin.delete(cookies(req).coreos || '');
-  gravar('logins.json', [...sessoesLogin]);
+  sessoesLogin.delete(hashHex(cookies(req).coreos || ''));
+  salvarLogins();
   res.set('Set-Cookie', 'coreos=; Path=/; Max-Age=0').json({ ok: true });
 });
 
@@ -215,7 +236,11 @@ app.post('/api/enviar', (req, res) => {
   const ext = path.extname(nome); const raiz = nome.slice(0, nome.length - ext.length);
   for (let i = 2; fs.existsSync(path.join(pasta, nome)); i++) nome = `${raiz}-${i}${ext}`;
   const destino = path.join(pasta, nome); const tmp = `${destino}.enviando`;
+  const LIMITE = Number(process.env.CORE_OS_MAX_UPLOAD_MB || 500) * 1024 * 1024;
+  if (Number(req.headers['content-length'] || 0) > LIMITE) return res.status(413).json({ erro: 'Arquivo grande demais.' });
   const out = fs.createWriteStream(tmp);
+  let recebido = 0;
+  req.on('data', (c) => { recebido += c.length; if (recebido > LIMITE) { req.unpipe(out); out.destroy(); try { fs.unlinkSync(tmp); } catch { /* */ } if (!res.headersSent) res.status(413).json({ erro: 'Arquivo grande demais.' }); } });
   req.pipe(out);
   out.on('finish', () => { fs.renameSync(tmp, destino); enviados.add(path.relative(CFG.vault, destino).split(path.sep).join('/')); res.json({ caminho: path.relative(CFG.vault, destino).split(path.sep).join('/') }); });
   const erro = () => { try { fs.unlinkSync(tmp); } catch { /* */ } if (!res.headersSent) res.status(500).json({ erro: 'Falhou no meio do envio.' }); };
@@ -242,7 +267,7 @@ function montarGrafo() {
     const dir = path.posix.dirname(n.id);
     const alvos = new Set();
     for (const m of txt.matchAll(/!?\[\[([^\]|#]+)/g)) { const c = porNome.get(path.posix.basename(m[1].trim()).replace(/\.md$/i, '').toLowerCase()); if (c) alvos.add(c); }
-    for (const m of txt.matchAll(/\]\(([^)#\s]+)\)/g)) { const c = path.posix.normalize(path.posix.join(dir, decodeURI(m[1]))); if (existe.has(c)) alvos.add(c); }
+    for (const m of txt.matchAll(/\]\(([^)#\s]+)\)/g)) { const c = path.posix.normalize(path.posix.join(dir, (() => { try { return decodeURI(m[1]); } catch { return m[1]; } })())); if (existe.has(c)) alvos.add(c); }
     for (const m of txt.matchAll(/`([^`\s]+)`/g)) { const c = m[1].replace(/\/$/, ''); if (existe.has(c)) alvos.add(c); else { const r = path.posix.normalize(path.posix.join(dir, c)); if (existe.has(r)) alvos.add(r); } }
     for (const a of alvos) if (a !== n.id) ligacoes.push({ de: n.id, para: a, tipo: 'link' });
   }
@@ -596,7 +621,10 @@ function autorizado({ deMim, chat, eu }) {
 
 function ponteWhatsapp(req, res) {
   const token = req.get('x-core-os-token') || '';
-  if (!CFG.tokenPonte || !crypto.timingSafeEqual(hash(token), hash(CFG.tokenPonte))) return res.status(401).json({ erro: 'token' });
+  const agora = Date.now(); const chave = `ponte:${req.ip}`;
+  const recentes = (falhas.get(chave) || []).filter((t) => agora - t < 60_000);
+  if (recentes.length >= 20) return res.status(429).json({ erro: 'tentativas demais' });
+  if (!CFG.tokenPonte || !crypto.timingSafeEqual(hash(token), hash(CFG.tokenPonte))) { falhas.set(chave, [...recentes, agora]); return res.status(401).json({ erro: 'token' }); }
   const b = req.body || {};
   const texto = String(b.texto || '').trim();
   const tipo = String(b.tipo || 'texto');
@@ -708,7 +736,8 @@ const wss = new WebSocketServer({ noServer: true });
 servidor.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, 'http://x');
   const conv = conversas.find((c) => c.id === url.searchParams.get('conversa'));
-  const origemOk = !req.headers.origin || new URL(req.headers.origin).host === req.headers.host;
+  let origemOk = !req.headers.origin;
+  try { origemOk = origemOk || new URL(req.headers.origin).host === req.headers.host; } catch { origemOk = false; }
   if (url.pathname !== '/ws' || !logado(req) || !conv || !origemOk) { socket.destroy(); return; }
   wss.handleUpgrade(req, socket, head, (ws) => {
     const cols = Number(url.searchParams.get('cols')) || 120;
