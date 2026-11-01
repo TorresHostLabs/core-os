@@ -1,6 +1,7 @@
 ---
 name: core-os
-description: Instala o Core OS numa VPS: segundo cérebro em arquivos .md, painel web com senha (árvore de arquivos, canvas e conversas reais do Claude Code), n8n, Evolution API e o fluxo WhatsApp → n8n → Claude Code. Use quando a pessoa disser "instala o Core OS", "monta meu segundo cérebro nesse servidor", "roda o instalador" ou colar o prompt de instalação.
+description: >-
+  Instala o Core OS numa VPS: segundo cérebro em arquivos .md, painel web com senha (árvore de arquivos, canvas e conversas reais do Claude Code), n8n, Evolution API e o fluxo WhatsApp → n8n → Claude Code. Use quando a pessoa disser "instala o Core OS", "monta meu segundo cérebro nesse servidor", "roda o instalador" ou colar o prompt de instalação.
 ---
 
 # Core OS · instalação guiada

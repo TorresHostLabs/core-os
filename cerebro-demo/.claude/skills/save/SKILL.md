@@ -1,6 +1,7 @@
 ---
 name: save
-description: Fecha a sessão de trabalho: checagem final de captura, todo e lições em dia, índices de pasta atualizados. Use quando o dono disser "/save", "salva", "fecha a sessão".
+description: >-
+  Fecha a sessão de trabalho: checagem final de captura, todo e lições em dia, índices de pasta atualizados. Use quando o dono disser "/save", "salva", "fecha a sessão".
 ---
 
 # /save

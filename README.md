@@ -8,6 +8,7 @@ Segundo cérebro rodando numa VPS: arquivos .md no padrão do segundo cérebro v
 | `painel/` | Servidor Node (express + ws + node-pty) e a interface em `public/` (sem build) |
 | `cerebro-demo/` | O cérebro que o instalador copia: regras, 5 skills limpas e 4 exemplos prontos |
 | `skill/` | A skill `core-os`: `SKILL.md`, `instalar.sh`, `whatsapp-qr.sh`, `stack/` (compose + fluxo do n8n) |
+| `dokploy/` | Instalação como app Compose no Dokploy: `docker-compose.yml`, `Dockerfile.painel`, `entrypoint.sh`, `gerar-env.sh`, `configurar.sh`, `.env.example` |
 | `montar-pacote.sh` | Gera `dist/core-os.tar.gz` (skill + painel + cérebro) |
 | `.teste/` | Cérebro e dados de teste local (não vai no pacote) |
 
@@ -26,6 +27,35 @@ Ou à mão: `git clone https://github.com/TorresHostLabs/core-os /root/core-os &
 
 ## Docker / Dokploy
 A imagem do painel é construída pelo GitHub Actions e publicada no GHCR (`ghcr.io/torreshostlabs/core-os`); o servidor só puxa a imagem pronta, sem compilar nada. Passo a passo, variáveis e o trecho do compose em [docs/dokploy.md](docs/dokploy.md).
+
+## Instalar no Dokploy
+Alternativa ao `instalar.sh` para quem já tem o [Dokploy](https://dokploy.com) no servidor. O Dokploy já usa as portas 80/443 (Traefik) e 3000, então aqui tudo roda em containers (painel, n8n, Evolution, Postgres, Redis), sem Caddy, sem ufw e sem systemd. O motor padrão é o Codex (OpenAI). Os arquivos ficam em `dokploy/`.
+
+1. No Dokploy: **Create Service > Compose**, provider **GitHub**, repositório `TorresHostLabs/core-os`, branch `main`, **Compose Path** `./dokploy/docker-compose.yml`.
+2. Gere o `.env` (não grava nada no repositório) e cole em **Environment**:
+   ```bash
+   ./dokploy/gerar-env.sh --nome "Seu Nome" --ip IP_DO_SERVIDOR
+   # ou, com domínio: ./dokploy/gerar-env.sh --nome "Seu Nome" --dominio cerebro.seudominio.com
+   ```
+   Para o Codex usar chave da API, preencha `OPENAI_API_KEY` (ou faça `codex login --device-auth` depois). Todas as variáveis estão em `dokploy/.env.example`. A senha do painel tem no mínimo 8 caracteres e não pode ter espaço, aspas, `$`, crase nem barra invertida.
+3. Clique em **Deploy** (o primeiro build baixa o Codex e demora).
+4. Se o painel reclamar de permissão na pasta do cérebro (a pasta do host é criada pelo Dokploy como root), corrija uma vez e faça Deploy de novo:
+   ```bash
+   docker run --rm -v /etc/dokploy/compose/NOME-DO-APP/files/cerebro:/d alpine chown 1000:1000 /d
+   ```
+5. No servidor, num clone do repositório e com um usuário do grupo docker (sem sudo), rode uma vez:
+   ```bash
+   git clone https://github.com/TorresHostLabs/core-os && cd core-os
+   ./dokploy/configurar.sh --url http://IP_DO_SERVIDOR:3100
+   ```
+   Ele importa e ativa o fluxo no n8n e cria a instância "cerebro" na Evolution com o webhook. Se houver mais de um app Compose rodando, passe `--projeto NOME`.
+6. Abra o painel, vá em **Configurações > WhatsApp** e leia o QR (WhatsApp > Aparelhos conectados). Abra o n8n e crie a sua conta no primeiro acesso.
+
+Portas do host: `CORE_OS_PAINEL_PORTA` (3100) e `N8N_PORTA` (5678). Com domínio, remova as `ports` do compose e use **Domains** do Dokploy (painel na porta 3000, n8n na porta 5678).
+
+O cérebro fica em `CORE_OS_CEREBRO` (padrão `../../files/cerebro`, a pasta persistente do Dokploy) e só é criado se ainda não existir. **Para atualizar:** Deploy de novo no Dokploy; cérebro, conversas e WhatsApp são mantidos.
+
+**Limitação conhecida:** dentro do Docker o sandbox do Codex (bubblewrap) não consegue criar namespaces. Por isso, nas conversas pelo terminal do painel, o Codex pede aprovação a cada comando. O `--sandbox` padrão do `motores.js` não foi alterado. O motor "OpenAI (API)" não tem esse problema.
 
 ## Como funciona
 - Cada conversa do painel é um `claude --session-id <id>` real num terminal (node-pty), na pasta do cérebro, com prompt de sistema apontando a nota `sessoes/<id>.md`.
