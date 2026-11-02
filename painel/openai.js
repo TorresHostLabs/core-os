@@ -310,12 +310,17 @@ const FERRAMENTAS = {
   },
 };
 const MAX_RESULADO_SHELL = 60_000;
-const esquemaFerramentas = (shell) => Object.entries(FERRAMENTAS).filter(([, f]) => shell || !f.soComShell)
+// ferramentas de outros módulos (ex.: WordPress); `disponivel()` decide se aparecem pro modelo
+export function registrarFerramentas(extras) {
+  for (const [nome, f] of Object.entries(extras)) FERRAMENTAS[nome] = { ...f, rodar: async (a, ctx) => { try { return await f.rodar(a, ctx); } catch (e) { throw falha(e.message); } } };
+}
+const ligada = (f, shell) => (shell || !f.soComShell) && (!f.disponivel || f.disponivel());
+const esquemaFerramentas = (shell) => Object.entries(FERRAMENTAS).filter(([, f]) => ligada(f, shell))
   .map(([name, f]) => ({ type: 'function', function: { name, description: f.descricao, parameters: f.parametros } }));
 
 async function executarFerramenta(nome, args, ctx) {
   const f = FERRAMENTAS[nome];
-  if (!f || (f.soComShell && !ctx.shell)) return `Erro: ferramenta "${nome}" não existe.`;
+  if (!f || !ligada(f, ctx.shell)) return `Erro: ferramenta "${nome}" não existe.`;
   try { return String(await f.rodar(args, ctx)); }
   catch (e) {
     const humano = { ENOENT: 'arquivo ou pasta não encontrado.', EACCES: 'sem permissão.', EISDIR: 'isso é uma pasta, não um arquivo.', ENOTDIR: 'parte do caminho não é uma pasta.' }[e.code];

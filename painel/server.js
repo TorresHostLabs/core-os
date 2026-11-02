@@ -13,7 +13,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { catalogo, PRIMEIROS_TESTES } from './extras.js';
 import { MOTORES, motorDe, disponiveis, comandoTerminal, rodarSemTela, vincularCodex, lerCodex } from './motores.js';
-import { iniciarOpenAI, lerConfigOpenAI, gravarConfigOpenAI, estadoChave, salvarChave, apagarChave, testarChave, listarModelos, usoOpenAI, historicoOpenAI, pararOpenAI } from './openai.js';
+import { iniciarWordPress, estadoWP, salvarConfigWP, apagarConfigWP, publicarWP, listarPostsWP, listarCategorias } from './wordpress.js';
+import { iniciarOpenAI, registrarFerramentas, lerConfigOpenAI, gravarConfigOpenAI, estadoChave, salvarChave, apagarChave, testarChave, listarModelos, usoOpenAI, historicoOpenAI, pararOpenAI } from './openai.js';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,6 +31,35 @@ const CFG = {
 };
 fs.mkdirSync(CFG.dados, { recursive: true });
 iniciarOpenAI({ dados: CFG.dados, vault: CFG.vault });
+iniciarWordPress({ dados: CFG.dados, vault: CFG.vault });
+registrarFerramentas({
+  publicar_wordpress: {
+    disponivel: () => estadoWP().configurado,
+    descricao: 'Cria ou atualiza um post no WordPress do dono. Passe "arquivo" (um .md do cérebro, com frontmatter opcional: titulo, status, categorias, tags, resumo, imagem, slug, data) ou "titulo" + "conteudo" em markdown. Imagens locais do cérebro sobem sozinhas. Padrão: rascunho (draft); só use "publish" se o dono pediu pra publicar.',
+    parametros: { type: 'object', properties: {
+      arquivo: { type: 'string', description: 'Caminho de um .md ou .html do cérebro.' },
+      titulo: { type: 'string' }, conteudo: { type: 'string', description: 'Markdown (ou HTML com formato=html).' },
+      formato: { type: 'string', enum: ['markdown', 'html'] },
+      status: { type: 'string', enum: ['draft', 'publish', 'future', 'pending', 'private'] },
+      data: { type: 'string', description: 'AAAA-MM-DD HH:MM no fuso do site (obrigatória com status future).' },
+      categorias: { type: 'array', items: { type: 'string' } }, tags: { type: 'array', items: { type: 'string' } },
+      resumo: { type: 'string' }, imagem: { type: 'string', description: 'Imagem destacada: caminho no cérebro.' },
+      slug: { type: 'string' }, id: { type: 'integer', description: 'Pra atualizar um post que já existe.' },
+    } },
+    descrever: (a) => `${a.status === 'publish' ? 'Publicando' : 'Mandando'} no WordPress: ${a.titulo || a.arquivo || `post ${a.id}`}`,
+    rodar: async (a) => JSON.stringify(await publicarWP(a)),
+  },
+  listar_posts_wordpress: {
+    disponivel: () => estadoWP().configurado,
+    descricao: 'Lista os posts mais recentes do WordPress do dono (id, status, título, data e link).',
+    parametros: { type: 'object', properties: { quantidade: { type: 'integer' }, busca: { type: 'string' }, status: { type: 'string', description: 'any, publish, draft, future…' } } },
+    descrever: () => 'Lendo os posts do WordPress',
+    rodar: async (a) => JSON.stringify(await listarPostsWP(a)),
+  },
+});
+// token só dos agentes abertos pelo painel (muda a cada início): deixa a skill do WordPress publicar
+// pelo painel sem nunca ver a senha do site
+const TOKEN_AGENTE = crypto.randomBytes(24).toString('hex');
 if (!CFG.senha) {
   CFG.senha = crypto.randomBytes(9).toString('base64url');
   console.log(`\n  CORE_OS_PASSWORD não definida. Senha desta execução: ${CFG.senha}\n`);
@@ -121,6 +151,8 @@ app.get('/api/eu', (req, res) => res.json({ logado: logado(req) }));
 
 // Ponte do WhatsApp (chamada pelo n8n com token próprio, antes do bloqueio de login).
 app.post('/api/ponte/whatsapp', (req, res) => ponteWhatsapp(req, res));
+// Ponte do WordPress (chamada pela skill wordpress, com o token que o painel passa só pros agentes que ele abre).
+app.post('/api/ponte/wordpress/:acao', (req, res) => ponteWordPress(req, res));
 
 app.use('/api', (req, res, next) => (logado(req) ? next() : res.status(401).json({ erro: 'Faça login.' })));
 
@@ -501,7 +533,7 @@ function promptSistema(id) {
 // (elas fazem o filho se achar subsessão e não gravar histórico).
 function envLimpo(extra = {}) {
   // WHATS_PARA: pra quem vai o "me manda no zap" (quem falou pelo WhatsApp, ou o primeiro número autorizado)
-  const env = { ...process.env, WHATS_PARA: acessoWhats().numeros[0] || '', ...extra };
+  const env = { ...process.env, WHATS_PARA: acessoWhats().numeros[0] || '', CORE_OS_PAINEL: `http://127.0.0.1:${CFG.porta}`, CORE_OS_AGENTE_TOKEN: TOKEN_AGENTE, ...extra };
   for (const k of Object.keys(env)) if (/^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_PID|CLAUDE_EFFORT|AI_AGENT|CORE_OS_PASSWORD|CORE_OS_HOOK_TOKEN)/.test(k)) delete env[k];
   // sem telemetria nem relatório de erros nas conversas abertas pelo painel
   env.DISABLE_TELEMETRY = '1'; env.DISABLE_ERROR_REPORTING = '1';
@@ -1121,6 +1153,34 @@ app.put('/api/config/openai/chave', async (req, res) => {
 app.get('/api/config/openai/modelos', async (req, res) => {
   try { res.json({ modelos: await listarModelos() }); } catch (e) { res.status(502).json({ erro: e.message }); }
 });
+
+// ---------- WordPress ----------
+app.get('/api/config/wordpress', (req, res) => res.json(estadoWP()));
+app.put('/api/config/wordpress', async (req, res) => {
+  if (req.body?.apagar) { apagarConfigWP(); return res.json(estadoWP()); }
+  try {
+    const ok = await salvarConfigWP({ url: req.body?.url, usuario: req.body?.usuario, senha: req.body?.senha }); // só guarda depois de o site aceitar
+    res.json({ ...estadoWP(), podePublicar: ok.podePublicar });
+  } catch (e) { res.status(400).json({ erro: e.message }); }
+});
+app.get('/api/wordpress/posts', async (req, res) => {
+  try { res.json({ posts: await listarPostsWP({ quantidade: req.query.n || 10 }) }); } catch (e) { res.status(502).json({ erro: e.message }); }
+});
+app.post('/api/wordpress/publicar', async (req, res) => {
+  try { res.json(await publicarWP(req.body || {})); } catch (e) { res.status(400).json({ erro: e.message }); }
+});
+async function ponteWordPress(req, res) {
+  const token = req.get('x-core-os-token') || '';
+  if (!crypto.timingSafeEqual(hash(token), hash(TOKEN_AGENTE))) return res.status(401).json({ erro: 'token' });
+  try {
+    const b = req.body || {};
+    if (req.params.acao === 'publicar') return res.json(await publicarWP(b));
+    if (req.params.acao === 'posts') return res.json(await listarPostsWP(b));
+    if (req.params.acao === 'categorias') return res.json(await listarCategorias());
+    if (req.params.acao === 'status') return res.json(estadoWP());
+    res.status(404).json({ erro: 'ação desconhecida' });
+  } catch (e) { res.status(400).json({ erro: e.message }); }
+}
 
 // ---------- estáticos ----------
 const vendor = (p) => path.join(AQUI, 'node_modules', p);

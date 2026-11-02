@@ -31,7 +31,7 @@ Direto, como no WhatsApp. Simples pra qualquer pessoa entender. Técnico só qua
 |---|---|
 | `tasks/` | `todo.md` (fonte única de tarefas) e `lessons.md` (padrões aprendidos) |
 | `memoria/` | `MEMORY.md`: contexto vivo, 1 linha por nota |
-| `conteudo/` | Tudo que o cérebro produz: `carrosseis/`, `thumbnails/`, `reels/`, `whatsapp/`. É daqui que o painel puxa a aba Conteúdos |
+| `conteudo/` | Tudo que o cérebro produz: `carrosseis/`, `thumbnails/`, `reels/`, `blog/`, `whatsapp/`. É daqui que o painel puxa a aba Conteúdos |
 | `sessoes/` | Uma nota de status por conversa aberta no painel (§6) |
 | `assets/` | Arquivos de apoio: fotos, logos, fontes, PDFs |
 | `.claude/` | Skills e hooks |
@@ -51,6 +51,7 @@ Direto, como no WhatsApp. Simples pra qualquer pessoa entender. Técnico só qua
 |---|---|
 | Carrossel | `conteudo/carrosseis/YYYY-MM-DD-tema/` |
 | Thumbnail | `conteudo/thumbnails/<slug-do-video>/` |
+| Post de blog (WordPress) | `conteudo/blog/YYYY-MM-DD-slug/post.md` |
 | Edição de vídeo | `conteudo/reels/<numero-ou-slug>/` |
 | Mensagem enviada no WhatsApp (registro) | `conteudo/whatsapp/YYYY-MM-DD-assunto.md` |
 | Tarefa, pendência | `tasks/todo.md` |
@@ -66,6 +67,7 @@ Toda entrega ganha um `pedido.md` na pasta dela: o que eu pedi, por onde pedi (p
 | Skill | O que faz |
 |---|---|
 | `whatsapp` | WhatsApp em mão dupla: lê conversas, acha contato e manda mensagem ou arquivo pra qualquer pessoa (ou pro dono) |
+| `wordpress` | Publica no WordPress do dono: nota .md vira post (rascunho, publicado ou agendado), com imagens, categorias e tags |
 | `carrossel` | Cria carrossel de Instagram: texto em HTML/CSS, renderizado em PNG slide a slide |
 | `thumbnail` | Gera thumbnail de YouTube a partir do roteiro e de uma referência de estilo |
 | `edicao-video` | Edita vídeo curto: último take de cada fala, cortes, legenda e trilha |
