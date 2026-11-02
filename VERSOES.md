@@ -49,3 +49,23 @@ A fila dos pr√≥ximos nomes, na ordem. Pra trocar a ordem ou acrescentar nomes, √
 | 18 | Victor Stone | DC | |
 | 19 | Lando Calrissian | Star Wars | |
 | 20 | Arthur Curry | DC | |
+| 21 | Luke Skywalker | Star Wars | |
+| 22 | Clark Kent | DC | |
+| 23 | Mace Windu | Star Wars | |
+| 24 | Bruce Wayne | DC | |
+| 25 | Qui-Gon Jinn | Star Wars | |
+| 26 | Hal Jordan | DC | |
+| 27 | Rey | Star Wars | |
+| 28 | Dick Grayson | DC | |
+| 29 | Grogu | Star Wars | |
+| 30 | Kara Zor-El | DC | |
+| 31 | Cassian Andor | Star Wars | |
+| 32 | Oliver Queen | DC | |
+| 33 | Jyn Erso | Star Wars | |
+| 34 | Dinah Lance | DC | |
+| 35 | Bo-Katan Kryze | Star Wars | |
+| 36 | J'onn J'onzz | DC | |
+| 37 | Wedge Antilles | Star Wars | |
+| 38 | Billy Batson | DC | |
+| 39 | Poe Dameron | Star Wars | |
+| 40 | Raven | DC | |
