@@ -55,6 +55,7 @@ Pras versões especiais (`vX.Y.0`), na ordem. Pra reservar um nome pra uma vers�
 | P21 | Anakin Skywalker | Star Wars | |
 | P22 | R2-D2 | Star Wars | |
 | P23 | Chewbacca | Star Wars | |
+| P24 | Yoda | Star Wars | |
 
 ## Banco de codinomes
 
@@ -68,7 +69,7 @@ Pras versões de correção, só coadjuvantes, na ordem. Pra trocar a ordem ou a
 | 4 | Wicket | Star Wars | |
 | 5 | Zatanna | DC |  |
 | 6 | Alfred Pennyworth | DC |  |
-| 7 | Yoda | Star Wars |  |
+| 7 | Bodhi Rook | Star Wars | |
 | 8 | Nien Nunb | Star Wars | |
 | 9 | Padmé Amidala | Star Wars |  |
 | 10 | John Constantine | DC |  |
