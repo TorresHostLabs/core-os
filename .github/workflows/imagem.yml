@@ -11,7 +11,7 @@ on:
     tags: ['v[0-9]+.[0-9]+.[0-9]+*']
 
 permissions:
-  contents: read
+  contents: write # renomeia a release com o codinome
   packages: write
 
 concurrency:
@@ -25,22 +25,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # cada versão tem um codinome (personagem da DC ou de Star Wars) registrado em VERSOES.md
+      # cada versão tem um codinome (personagem da DC ou de Star Wars): da tabela de VERSOES.md ou, se faltar, o próximo do banco
       - name: Codinome da versão
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -e
-          # colunas da tabela (sem espaços nas pontas): versão, codinome, universo
-          tabela=$(awk -F'|' '/^\| *v[0-9]/ { for (i = 2; i <= 4; i++) gsub(/^ +| +$/, "", $i); print $2 "\t" $3 "\t" $4 }' VERSOES.md)
-          linha=$(printf '%s\n' "$tabela" | awk -F'\t' -v v="$GITHUB_REF_NAME" '$1 == v')
-          [ -n "$linha" ] || { echo "::error::A versão $GITHUB_REF_NAME não está em VERSOES.md. Acrescente a linha (codinome DC ou Star Wars) e crie a tag de novo."; exit 1; }
-          codinome=$(printf '%s' "$linha" | cut -f2)
-          universo=$(printf '%s' "$linha" | cut -f3)
-          [ -n "$codinome" ] || { echo "::error::Falta o codinome de $GITHUB_REF_NAME em VERSOES.md."; exit 1; }
-          case "$universo" in DC|"Star Wars") ;; *) echo "::error::Universo \"$universo\" inválido em VERSOES.md: use DC ou Star Wars."; exit 1;; esac
-          repetidos=$(printf '%s\n' "$tabela" | cut -f2 | tr '[:upper:]' '[:lower:]' | sort | uniq -d)
-          [ -z "$repetidos" ] || { echo "::error::Codinome repetido em VERSOES.md: $repetidos"; exit 1; }
+          set -euo pipefail
+          tag=$GITHUB_REF_NAME
+          # nomes já usados no título de outras releases ("vX.Y.Z · Codinome"): duas versões nunca pegam o mesmo nome do banco
+          VERSAO_USADOS=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select((.tag_name | split(\"-\")[0]) != \"${tag%%-*}\") | (.name // \"\") | split(\" · \") | .[1] // empty")
+          export VERSAO_USADOS
+          r=$(./versao.sh codinome "$tag" 2>erro.txt) || { echo "::error::$(cat erro.txt)"; exit 1; }
+          IFS=$'\t' read -r codinome universo origem <<<"$r"
           echo "CODINOME=$codinome" >> "$GITHUB_ENV"
-          echo "### $GITHUB_REF_NAME · $codinome ($universo)" >> "$GITHUB_STEP_SUMMARY"
+          echo "### $tag · $codinome ($universo)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$origem" = banco ]; then
+            echo "::warning::$tag não estava em VERSOES.md: usei $codinome, o próximo do banco. Registre com ./versao.sh registrar ${tag%%-*} \"o que mudou\" e faça o merge na main."
+            echo "Codinome tirado do banco. Registre em VERSOES.md: \`./versao.sh registrar ${tag%%-*} \"o que mudou\"\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # título da release com o codinome (se a tag veio de uma release)
+          if rel=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '[.id, .name] | @tsv' 2>/dev/null); then
+            IFS=$'\t' read -r id nome <<<"$rel"
+            [ "$nome" = "$tag · $codinome" ] || gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -f name="$tag · $codinome" >/dev/null
+          fi
 
       - name: Nome da imagem em minúsculas (o GHCR exige)
         run: echo "IMAGEM=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
