@@ -22,6 +22,7 @@ Outros comandos: `./versao.sh proximo` (mostra o próximo codinome) e `./versao.
 | Versão | Codinome | Universo | O que mudou |
 |---|---|---|---|
 | v0.0.1 | Lois Lane | DC | Integração com WordPress: notas do cérebro viram posts no seu site |
+| v0.0.2 | Obi-Wan Kenobi | Star Wars | Banco de codinomes (40 personagens), versao.sh e release renomeada com o codinome pelo build |
 
 ## Banco de codinomes
 
@@ -29,7 +30,7 @@ A fila dos próximos nomes, na ordem. Pra trocar a ordem ou acrescentar nomes, �
 
 | Ordem | Codinome | Universo | Usado em |
 |---|---|---|---|
-| 1 | Obi-Wan Kenobi | Star Wars | |
+| 1 | Obi-Wan Kenobi | Star Wars | v0.0.2 |
 | 2 | Barbara Gordon | DC | |
 | 3 | Ahsoka Tano | Star Wars | |
 | 4 | Lucius Fox | DC | |
