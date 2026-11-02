@@ -2,18 +2,21 @@
 
 O servidor **não compila nada**: o GitHub Actions constrói a imagem do painel e a publica no GHCR; o Dokploy só puxa a imagem pronta.
 
-Imagem: `ghcr.io/torreshostlabs/core-os` (tags `latest`, `sha-<commit>` e `v*`).
+Imagem: `ghcr.io/torreshostlabs/core-os` (tags `v1.2.3`, `1.2.3` e `latest`, que aponta para a última versão estável).
 
 ## Quando a imagem é construída
-Workflow `.github/workflows/imagem.yml`. Para economizar minutos, ele **só roda**:
-- num push na `main` que mude `painel/`, `cerebro-demo/`, `Dockerfile` ou `docker/`;
-- ao criar uma tag `v*`;
-- manualmente (aba **Actions** › "Imagem do painel" › **Run workflow**). O botão só aparece depois que o workflow existe na `main`. Rodando a partir de outra branch, publica só a tag `sha-…`, nunca `latest`.
+A imagem **só é criada ao publicar uma versão**: uma tag `vMAJOR.MINOR.PATCH` (ex.: `v1.0.0`; sufixos como `v1.1.0-rc1` valem e **não** movem o `latest`). Nenhum push na `main` e nenhum disparo manual cria imagem. Workflow: `.github/workflows/imagem.yml`.
+
+Para lançar uma versão, de uma das duas formas:
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+ou no GitHub: **Releases › Draft a new release**, criando a tag `v1.0.0` (acompanhe o build na aba **Actions**).
 
 Antes de publicar, o workflow sobe o container e confere que o painel responde, que o login funciona e que o Codex CLI está presente. As camadas que não mudaram vêm do cache.
 
 ## Passo a passo
-1. **Fazer o merge na `main`**: o push dispara o workflow e a primeira imagem é publicada (acompanhe na aba **Actions**). Antes do merge o workflow ainda não existe na `main`, então não há imagem no GHCR.
+1. **Publicar a primeira versão** (veja acima, ex.: `v1.0.0`) para a imagem existir no GHCR. Sem uma tag, não há imagem.
 2. **Visibilidade do pacote.** O GHCR cria o pacote como *privado*. Escolha uma opção:
    - tornar público: GitHub › seu perfil/organização › **Packages** › `core-os` › *Package settings* › *Change visibility*; ou
    - manter privado e cadastrar um registry no Dokploy (`ghcr.io`, seu usuário e um token com `read:packages`).
@@ -36,7 +39,7 @@ Antes de publicar, o workflow sobe o container e confere que o painel responde, 
       - painel-dados:/home/node/dados
       - codex:/home/node/.codex
 ```
-4. **Atualizar**: *Redeploy* no Dokploy. Só as camadas que mudaram são baixadas (uma mudança de código costuma ser alguns MB). Para travar numa versão, use uma tag fixa (`sha-abc1234` ou `v1.0.0`) em vez de `latest`.
+4. **Atualizar**: *Redeploy* no Dokploy. Só as camadas que mudaram são baixadas (uma mudança de código costuma ser alguns MB). Para travar numa versão, use uma tag fixa (`v1.0.0` ou `1.0.0`) em vez de `latest`.
 
 ## O que a imagem já traz (não precisa de variável)
 Usuário `node` (uid 1000), porta `3000`, cérebro em `/home/node/cerebro`, dados em `/home/node/dados`, Codex em `/home/node/.codex`, `EVO_URL=http://evolution:8080`, `EVO_INSTANCE=cerebro`. Tudo pode ser sobrescrito por variável de ambiente.
