@@ -7,7 +7,7 @@ Imagem: `ghcr.io/torreshostlabs/core-os` (tags `v1.2.3`, `1.2.3` e `latest`, que
 ## Quando a imagem é construída
 A imagem **só é criada ao publicar uma versão**: uma tag `vMAJOR.MINOR.PATCH` (ex.: `v1.0.0`; sufixos como `v1.1.0-rc1` valem e **não** movem o `latest`). Nenhum push na `main` e nenhum disparo manual cria imagem. Workflow: `.github/workflows/imagem.yml`.
 
-**Cada versão tem um codinome**, um personagem da DC ou de Star Wars, sem repetir. Antes da tag, registre a versão em [`VERSOES.md`](../VERSOES.md) (versão, codinome, universo, o que mudou) e faça o merge na `main`. O workflow confere essa tabela antes de construir: tag sem linha, universo diferente de `DC`/`Star Wars` ou codinome repetido fazem o build falhar sem publicar nada. O codinome vai na etiqueta `io.coreos.codinome` da imagem; use-o também no título da release (`v1.0.0 · Codinome`).
+**Cada versão tem um codinome**, um personagem da DC ou de Star Wars, sem repetir, tirado do **banco de codinomes** em [`VERSOES.md`](../VERSOES.md). Antes da tag, rode `./versao.sh registrar v1.0.0 "o que mudou"` (pega o próximo nome do banco e marca como usado) e faça o merge na `main`. Se esquecer, o build usa o próximo nome livre do banco e avisa no resumo do run. Universo diferente de `DC`/`Star Wars`, codinome repetido ou banco vazio fazem o build falhar sem publicar nada. O build renomeia a release pra `v1.0.0 · Codinome` e põe o codinome na etiqueta `io.coreos.codinome` da imagem.
 
 Para lançar uma versão, de uma das duas formas:
 ```bash
