@@ -25,26 +25,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # cada versão tem um codinome (personagem da DC ou de Star Wars): da tabela de VERSOES.md ou, se faltar, o próximo do banco
-      # (versão especial vX.Y.0: banco de protagonistas)
+      # cada versão tem um codinome (personagem da DC ou de Star Wars) reservado em VERSOES.md
+      # (versão especial vX.Y.0: um protagonista). Sem reserva pra versão, o build falha.
       - name: Codinome da versão
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag=$GITHUB_REF_NAME
-          # nomes já usados no título de outras releases ("vX.Y.Z · Codinome"): duas versões nunca pegam o mesmo nome do banco
-          VERSAO_USADOS=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq ".[] | select((.tag_name | split(\"-\")[0]) != \"${tag%%-*}\") | (.name // \"\") | split(\" · \") | .[1] // empty")
-          export VERSAO_USADOS
           erro="${RUNNER_TEMP:-/tmp}/codinome-erro.txt"
           r=$(./versao.sh codinome "$tag" 2>"$erro") || { echo "::error::$(cat "$erro")"; exit 1; }
           IFS=$'\t' read -r codinome universo origem <<<"$r"
           echo "CODINOME=$codinome" >> "$GITHUB_ENV"
           echo "### $tag · $codinome ($universo)" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$origem" = banco ]; then
-            echo "::warning::$tag não estava em VERSOES.md: usei $codinome, o próximo do banco. Registre com ./versao.sh registrar ${tag%%-*} \"o que mudou\" e faça o merge na main."
-            echo "Codinome tirado do banco. Registre em VERSOES.md: \`./versao.sh registrar ${tag%%-*} \"o que mudou\"\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$origem" = reserva ]; then
+            echo "::warning::$tag ainda não está na tabela de versões de VERSOES.md: usei $codinome, o nome reservado pra ela. Registre com ./versao.sh registrar ${tag%%-*} \"o que mudou\" e faça o merge na main."
+            echo "Nome da reserva. Registre na tabela de VERSOES.md: \`./versao.sh registrar ${tag%%-*} \"o que mudou\"\`" >> "$GITHUB_STEP_SUMMARY"
           fi
           # título da release com o codinome (se a tag veio de uma release)
           if rel=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '[.id, .name] | @tsv' 2>/dev/null); then
