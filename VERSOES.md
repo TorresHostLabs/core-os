@@ -52,6 +52,7 @@ Pras vers√µes especiais (`vX.Y.0`), na ordem. Pra reservar um nome pra uma vers√
 | P18 | Billy Batson | DC | |
 | P19 | Jyn Erso | Star Wars | |
 | P20 | J'onn J'onzz | DC | |
+| P21 | Anakin Skywalker | Star Wars | |
 
 ## Banco de codinomes
 
