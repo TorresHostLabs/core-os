@@ -53,6 +53,7 @@ Pras versões especiais (`vX.Y.0`), na ordem. Pra reservar um nome pra uma vers�
 | P19 | Jyn Erso | Star Wars | |
 | P20 | J'onn J'onzz | DC | |
 | P21 | Anakin Skywalker | Star Wars | |
+| P22 | R2-D2 | Star Wars | |
 
 ## Banco de codinomes
 
@@ -63,7 +64,7 @@ Pras versões de correção, só coadjuvantes, na ordem. Pra trocar a ordem ou a
 | 1 | Obi-Wan Kenobi | Star Wars | v0.0.2 |
 | 2 | Barbara Gordon | DC |  |
 | 3 | Lucius Fox | DC |  |
-| 4 | R2-D2 | Star Wars |  |
+| 4 | Wicket | Star Wars | |
 | 5 | Zatanna | DC |  |
 | 6 | Alfred Pennyworth | DC |  |
 | 7 | Yoda | Star Wars |  |
