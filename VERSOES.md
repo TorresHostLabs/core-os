@@ -3,7 +3,7 @@
 Cada versão tem um **codinome**: o nome de um personagem da **DC** ou de **Star Wars**, sem repetir, e **cada nome já tem a sua versão reservada** nos bancos abaixo. Você sabe hoje qual personagem cada release vai receber.
 
 - **Versões especiais** (as que terminam em `.0`: `v0.1.0`, `v0.5.0`, `v1.0.0`…) levam um **protagonista**, do banco de protagonistas.
-- **Versões de correção** (`v0.0.3`, `v0.1.2`…) levam um **coadjuvante**, do banco de codinomes.
+- **Versões de correção** (`v0.0.3`, `v0.1.2`…) levam um **coadjuvante que conserta** (mecânico, engenheiro, técnico, médico…), do banco de codinomes.
 
 A tag continua sendo o número (`v0.1.0`); o codinome vai no título da release e numa etiqueta da imagem Docker.
 
@@ -62,48 +62,48 @@ Versões especiais (`vX.Y.0`). A coluna "Versão" é a reserva.
 
 ## Banco de codinomes
 
-Versões de correção, só coadjuvantes. A coluna "Versão" é a reserva: 3 correções pra fechar a `v0.0.x` e depois 4 por versão especial (`v0.1.1` a `v0.1.4`, `v0.2.1` a `v0.2.4`…).
+Versões de correção: **coadjuvantes que consertam** (mecânicos, engenheiros, técnicos, construtores de droides, médicos e curandeiros). A coluna "Versão" é a reserva: 3 correções pra fechar a `v0.0.x` e depois 4 por versão especial (`v0.1.1` a `v0.1.4`, `v0.2.1` a `v0.2.4`…).
 
 | Ordem | Codinome | Universo | Versão |
 |---|---|---|---|
 | 1 | Obi-Wan Kenobi | Star Wars | v0.0.2 |
 | 2 | Barbara Gordon | DC | v0.0.3 |
-| 3 | Lucius Fox | DC | v0.0.4 |
-| 4 | Wicket | Star Wars | v0.0.5 |
-| 5 | Zatanna | DC | v0.1.1 |
+| 3 | Rose Tico | Star Wars | v0.0.4 |
+| 4 | Lucius Fox | DC | v0.0.5 |
+| 5 | BB-8 | Star Wars | v0.1.1 |
 | 6 | Alfred Pennyworth | DC | v0.1.2 |
-| 7 | Bodhi Rook | Star Wars | v0.1.3 |
-| 8 | Nien Nunb | Star Wars | v0.1.4 |
-| 9 | Padmé Amidala | Star Wars | v0.2.1 |
-| 10 | John Constantine | DC | v0.2.2 |
-| 11 | Selina Kyle | DC | v0.2.3 |
-| 12 | Victor Stone | DC | v0.2.4 |
-| 13 | Lando Calrissian | Star Wars | v0.3.1 |
-| 14 | Mace Windu | Star Wars | v0.3.2 |
-| 15 | Qui-Gon Jinn | Star Wars | v0.3.3 |
-| 16 | Dick Grayson | DC | v0.3.4 |
-| 17 | Grogu | Star Wars | v0.4.1 |
-| 18 | Dinah Lance | DC | v0.4.2 |
-| 19 | Bo-Katan Kryze | Star Wars | v0.4.3 |
-| 20 | Wedge Antilles | Star Wars | v0.4.4 |
-| 21 | Poe Dameron | Star Wars | v0.5.1 |
-| 22 | Raven | DC | v0.5.2 |
-| 23 | C-3PO | Star Wars | v0.5.3 |
-| 24 | James Gordon | DC | v0.5.4 |
-| 25 | BB-8 | Star Wars | v0.6.1 |
-| 26 | Jimmy Olsen | DC | v0.6.2 |
-| 27 | Hera Syndulla | Star Wars | v0.6.3 |
-| 28 | Perry White | DC | v0.6.4 |
-| 29 | Sabine Wren | Star Wars | v0.7.1 |
-| 30 | Martha Kent | DC | v0.7.2 |
-| 31 | Rose Tico | Star Wars | v0.7.3 |
-| 32 | Iris West | DC | v0.7.4 |
-| 33 | Maz Kanata | Star Wars | v0.8.1 |
-| 34 | Cisco Ramon | DC | v0.8.2 |
-| 35 | K-2SO | Star Wars | v0.8.3 |
-| 36 | Mera | DC | v0.8.4 |
-| 37 | Ackbar | Star Wars | v0.9.1 |
-| 38 | Etta Candy | DC | v0.9.2 |
-| 39 | Steve Trevor | DC | v0.9.3 |
-| 40 | Renee Montoya | DC | v0.9.4 |
+| 7 | Chopper | Star Wars | v0.1.3 |
+| 8 | Cisco Ramon | DC | v0.1.4 |
+| 9 | Peli Motto | Star Wars | v0.2.1 |
+| 10 | Victor Stone | DC | v0.2.2 |
+| 11 | Babu Frik | Star Wars | v0.2.3 |
+| 12 | Ted Kord | DC | v0.2.4 |
+| 13 | Kuiil | Star Wars | v0.3.1 |
+| 14 | Michael Holt | DC | v0.3.2 |
+| 15 | Huyang | Star Wars | v0.3.3 |
+| 16 | John Henry Irons | DC | v0.3.4 |
+| 17 | Bix Caleen | Star Wars | v0.4.1 |
+| 18 | Leslie Thompkins | DC | v0.4.2 |
+| 19 | Tam Ryvora | Star Wars | v0.4.3 |
+| 20 | Will Magnus | DC | v0.4.4 |
+| 21 | Jarek Yeager | Star Wars | v0.5.1 |
+| 22 | Caitlin Snow | DC | v0.5.2 |
+| 23 | 2-1B | Star Wars | v0.5.3 |
+| 24 | Felicity Smoak | DC | v0.5.4 |
+| 25 | Tech | Star Wars | v0.6.1 |
+| 26 | Emil Hamilton | DC | v0.6.2 |
+| 27 | Nala Se | Star Wars | v0.6.3 |
+| 28 | Ray Palmer | DC | v0.6.4 |
+| 29 | Grogu | Star Wars | v0.7.1 |
+| 30 | Raven | DC | v0.7.2 |
+| 31 | Quarrie | Star Wars | v0.7.3 |
+| 32 | Thomas Wayne | DC | v0.7.4 |
+| 33 | Neeku Vozo | Star Wars | v0.8.1 |
+| 34 | Charles McNider | DC | v0.8.2 |
+| 35 | AZI-3 | Star Wars | v0.8.3 |
+| 36 | Martin Stein | DC | v0.8.4 |
+| 37 | Watto | Star Wars | v0.9.1 |
+| 38 | Jefferson Jackson | DC | v0.9.2 |
+| 39 | Doctor Aphra | Star Wars | v0.9.3 |
+| 40 | Ryan Choi | DC | v0.9.4 |
 | 41 | Din Djarin | Star Wars | v1.0.1 |
