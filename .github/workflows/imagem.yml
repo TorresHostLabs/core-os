@@ -25,6 +25,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # cada versão tem um codinome (personagem da DC ou de Star Wars) registrado em VERSOES.md
+      - name: Codinome da versão
+        run: |
+          set -e
+          # colunas da tabela (sem espaços nas pontas): versão, codinome, universo
+          tabela=$(awk -F'|' '/^\| *v[0-9]/ { for (i = 2; i <= 4; i++) gsub(/^ +| +$/, "", $i); print $2 "\t" $3 "\t" $4 }' VERSOES.md)
+          linha=$(printf '%s\n' "$tabela" | awk -F'\t' -v v="$GITHUB_REF_NAME" '$1 == v')
+          [ -n "$linha" ] || { echo "::error::A versão $GITHUB_REF_NAME não está em VERSOES.md. Acrescente a linha (codinome DC ou Star Wars) e crie a tag de novo."; exit 1; }
+          codinome=$(printf '%s' "$linha" | cut -f2)
+          universo=$(printf '%s' "$linha" | cut -f3)
+          [ -n "$codinome" ] || { echo "::error::Falta o codinome de $GITHUB_REF_NAME em VERSOES.md."; exit 1; }
+          case "$universo" in DC|"Star Wars") ;; *) echo "::error::Universo \"$universo\" inválido em VERSOES.md: use DC ou Star Wars."; exit 1;; esac
+          repetidos=$(printf '%s\n' "$tabela" | cut -f2 | tr '[:upper:]' '[:lower:]' | sort | uniq -d)
+          [ -z "$repetidos" ] || { echo "::error::Codinome repetido em VERSOES.md: $repetidos"; exit 1; }
+          echo "CODINOME=$codinome" >> "$GITHUB_ENV"
+          echo "### $GITHUB_REF_NAME · $codinome ($universo)" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Nome da imagem em minúsculas (o GHCR exige)
         run: echo "IMAGEM=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
@@ -77,6 +94,9 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            org.opencontainers.image.ref.name=${{ github.ref_name }} · ${{ env.CODINOME }}
+            io.coreos.codinome=${{ env.CODINOME }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
