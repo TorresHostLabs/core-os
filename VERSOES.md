@@ -48,18 +48,17 @@ Versões especiais (`vX.Y.0`). A coluna "Versão" é a reserva.
 | P10 | Hal Jordan | DC | v1.0.0 |
 | P11 | Finn | Star Wars | v1.1.0 |
 | P12 | Arthur Curry | DC | v1.2.0 |
-| P13 | Din Djarin | Star Wars | v1.3.0 |
-| P14 | Kara Zor-El | DC | v1.4.0 |
-| P15 | Ahsoka Tano | Star Wars | v1.5.0 |
-| P16 | Oliver Queen | DC | v1.6.0 |
-| P17 | Cassian Andor | Star Wars | v1.7.0 |
-| P18 | Billy Batson | DC | v1.8.0 |
-| P19 | Jyn Erso | Star Wars | v1.9.0 |
-| P20 | J'onn J'onzz | DC | v2.0.0 |
-| P21 | Anakin Skywalker | Star Wars | v2.1.0 |
-| P22 | R2-D2 | Star Wars | v2.2.0 |
-| P23 | Chewbacca | Star Wars | v2.3.0 |
-| P24 | Yoda | Star Wars | v2.4.0 |
+| P13 | Kara Zor-El | DC | v1.3.0 |
+| P14 | Ahsoka Tano | Star Wars | v1.4.0 |
+| P15 | Oliver Queen | DC | v1.5.0 |
+| P16 | Cassian Andor | Star Wars | v1.6.0 |
+| P17 | Billy Batson | DC | v1.7.0 |
+| P18 | Jyn Erso | Star Wars | v1.8.0 |
+| P19 | J'onn J'onzz | DC | v1.9.0 |
+| P20 | Anakin Skywalker | Star Wars | v2.0.0 |
+| P21 | R2-D2 | Star Wars | v2.1.0 |
+| P22 | Chewbacca | Star Wars | v2.2.0 |
+| P23 | Yoda | Star Wars | v2.3.0 |
 
 ## Banco de codinomes
 
@@ -107,3 +106,4 @@ Versões de correção, só coadjuvantes. A coluna "Versão" é a reserva: 3 cor
 | 38 | Etta Candy | DC | v0.9.2 |
 | 39 | Steve Trevor | DC | v0.9.3 |
 | 40 | Renee Montoya | DC | v0.9.4 |
+| 41 | Din Djarin | Star Wars | v1.0.1 |
