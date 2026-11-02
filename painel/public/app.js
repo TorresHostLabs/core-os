@@ -212,9 +212,11 @@ function cardArquivo(caminho, x, y) {
     chave: `arq:${caminho}`, classe: t === 'texto' || t === 'outro' ? 'card-doc' : 'card-midia',
     icone: t === 'imagem' ? 'imagem' : t === 'video' ? 'filme' : 'doc',
     titulo: nomeDe(caminho), sub: caminho.split('/').slice(-2, -1)[0] || '', x, y, ...tam, corpo: corpoDeArquivo(caminho),
-    extras: /\.(md|txt)$/i.test(caminho) ? '<button class="botao-leve botao-editar" data-editar title="Editar nota">Editar</button>' : '',
+    extras: (/\.md$/i.test(caminho) ? '<button class="botao-leve botao-editar" data-wordpress title="Mandar pro WordPress como rascunho">WordPress</button>' : '')
+      + (/\.(md|txt)$/i.test(caminho) ? '<button class="botao-leve botao-editar" data-editar title="Editar nota">Editar</button>' : ''),
   });
   if (/\.(md|txt)$/i.test(caminho)) card.querySelector('[data-editar]').addEventListener('click', () => editarNota(card, caminho));
+  card.querySelector('[data-wordpress]')?.addEventListener('click', (e) => mandarProWordPress(e.currentTarget, caminho));
   return card;
 }
 
@@ -1320,7 +1322,7 @@ $('#folha-backup')?.addEventListener('click', async (e) => {
 
 function fecharConfig() { $('#folha-config').hidden = true; qrAtual = null; qrVencido = false; pintarDock(); }
 async function pintarConfig() {
-  const [cfg, mot, ext] = await Promise.all([api('/api/config'), api('/api/config/motores'), api('/api/extras')]);
+  const [cfg, mot, ext, wp] = await Promise.all([api('/api/config'), api('/api/config/motores'), api('/api/extras'), api('/api/config/wordpress').catch(() => ({ configurado: false }))]);
   const itemExtra = (x) => `<li class="extra"><span class="extra-logo"><img src="/logos/${esc(x.logo)}" alt=""></span>
       <span class="extra-texto"><b>${esc(x.nome)}</b><span>${esc(x.faz)}</span></span>
       ${x.instalado ? '<span class="pilula conectado">Instalado</span>' : `<button class="botao-leve" data-acao="pedir" data-pedido="${esc(x.pedido)}">${ic('conversaNova')} Pedir na conversa</button>`}</li>`;
@@ -1372,6 +1374,7 @@ async function pintarConfig() {
         <p class="config-dica">Exemplo: conecte o número business aqui e autorize o seu número pessoal. Você manda mensagem do pessoal pro business e o cérebro responde lá.</p>
       </div>
     </section>
+    ${cartaoWordPress(wp)}
     <section class="config-cartao">
       <div class="config-cabeca"><span class="config-icone azul">${ic('raio')}</span>
         <div class="config-titulo"><b>Aplicações extras</b><span>Programas que deixam o cérebro fazer mais coisas neste servidor</span></div></div>
@@ -1401,6 +1404,83 @@ async function pintarConfig() {
       <div class="config-botoes"><button class="botao-leve" data-acao="pedir" data-pedido="${esc(pedidoDominio)}">${ic('conversaNova')} Pedir numa conversa</button></div>
     </section>`;
 }
+// ---------- WordPress ----------
+const PEDIDO_WP = 'Escreve um post pro meu blog sobre "3 tarefas que a IA faz por mim todo dia", no meu estilo, e manda pro WordPress como rascunho usando a skill wordpress. Me devolve o link de edição.';
+const STATUS_WP = { draft: 'rascunho', publish: 'publicado', future: 'agendado', pending: 'em revisão', private: 'privado' };
+function cartaoWordPress(wp) {
+  const cabeca = `<div class="config-cabeca"><span class="extra-logo"><img src="/logos/wordpress.svg" alt="" width="22" height="22"></span>
+    <div class="config-titulo"><b>WordPress</b><span>Publica os posts do cérebro no seu site</span></div>
+    <span class="pilula ${wp.configurado ? 'conectado' : ''}">${wp.configurado ? 'Conectado' : 'Desconectado'}</span></div>`;
+  if (wp.configurado) return `<section class="config-cartao" id="wp-cartao">${cabeca}
+    <dl class="config-linhas">
+      <div><dt>Site</dt><dd><a href="${esc(wp.url)}" target="_blank" rel="noopener">${esc(wp.url.replace(/^https?:\/\//, ''))}</a></dd></div>
+      <div><dt>Usuário</dt><dd>${esc(wp.usuario)}${wp.nome && wp.nome !== wp.usuario ? ` <span class="config-sutil">${esc(wp.nome)}</span>` : ''} · senha terminando em ${esc(wp.final)}${wp.origem === 'ambiente' ? ' · definida no servidor' : ''}</dd></div>
+    </dl>
+    <div id="wp-posts"></div>
+    <div class="config-botoes">
+      <button class="botao-leve" data-acao="pedir" data-pedido="${esc(PEDIDO_WP)}">${ic('conversaNova')} Pedir um post numa conversa</button>
+      <button class="botao-leve" data-wp="posts" type="button">Ver últimos posts</button>
+      ${wp.origem === 'painel' ? '<button class="botao-leve" data-wp="desconectar" type="button">Desconectar</button>' : ''}
+    </div>
+    <p class="config-dica">Peça numa conversa ("posta esse artigo no blog", "agenda o post pra sexta 9h") ou abra uma nota <code>.md</code> e clique em <b>WordPress</b> pra mandar como rascunho. Sem você pedir pra publicar, tudo vai como rascunho.</p>
+  </section>`;
+  return `<section class="config-cartao" id="wp-cartao">${cabeca}
+    <form id="wp-form" class="agenda-form">
+      <label>Endereço do site<input name="url" placeholder="https://seusite.com.br" autocomplete="off" spellcheck="false" required></label>
+      <div class="agenda-linha">
+        <label>Usuário<input name="usuario" autocomplete="off" spellcheck="false" required></label>
+        <label>Senha de aplicativo<input name="senha" type="password" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" autocomplete="new-password" required></label>
+      </div>
+      <p class="login-erro" id="wp-erro" role="alert"></p>
+      <div class="config-botoes"><button type="submit" class="botao-leve botao-salvar">Testar e conectar</button></div>
+    </form>
+    <p class="config-dica">No seu WordPress: <b>Usuários › Perfil › Senhas de aplicativo</b>, dê um nome (ex.: Core OS) e clique em <b>Adicionar</b>. Cole aqui a senha gerada (não é a sua senha de login). O usuário precisa ser Autor, Editor ou Administrador e o site precisa estar em HTTPS. A conexão é testada antes de ser guardada neste servidor e a senha nunca volta pra esta tela.</p>
+  </section>`;
+}
+async function conectarWordPress(e) {
+  e.preventDefault();
+  const f = e.target; const erro = $('#wp-erro'); erro.textContent = '';
+  const b = f.querySelector('.botao-salvar'); b.disabled = true; b.textContent = 'Testando…';
+  try {
+    const r = await fetch('/api/config/wordpress', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: f.url.value, usuario: f.usuario.value, senha: f.senha.value }) });
+    if (r.status === 401) return mostrarLogin();
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { erro.textContent = j.erro || 'Não consegui conectar.'; return; }
+    if (j.podePublicar === false) alert('Conectado. Esse usuário só pode salvar rascunhos e mandar pra revisão: publicar direto exige Editor ou Administrador.');
+    pintarConfig();
+  } catch { erro.textContent = 'Sem conexão com o painel.'; } finally { b.disabled = false; b.textContent = 'Testar e conectar'; }
+}
+document.addEventListener('submit', (e) => { if (e.target.id === 'wp-form') conectarWordPress(e); });
+$('#folha-config')?.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-wp]'); if (!b) return;
+  if (b.dataset.wp === 'desconectar') {
+    if (!confirm('Desconectar o WordPress? O cérebro deixa de publicar até você conectar de novo. (Revogue também a senha de aplicativo no WordPress, se não for mais usar.)')) return;
+    await api('/api/config/wordpress', { method: 'PUT', body: JSON.stringify({ apagar: true }) }); pintarConfig();
+  }
+  if (b.dataset.wp === 'posts') {
+    const caixa = $('#wp-posts'); b.disabled = true; caixa.innerHTML = '<p class="config-dica">Buscando…</p>';
+    try {
+      const r = await fetch('/api/wordpress/posts?n=8'); const j = await r.json();
+      if (!r.ok) throw new Error(j.erro);
+      caixa.innerHTML = j.posts.length ? `<ul class="extras">${j.posts.map((p) => `<li class="extra"><span class="extra-texto"><b>${esc(p.titulo || '(sem título)')}</b>
+        <span>${esc(STATUS_WP[p.status] || p.status)} · ${esc(new Date(p.data).toLocaleDateString('pt-BR'))}</span></span>
+        <a class="botao-leve" href="${esc(p.status === 'publish' ? p.link : p.editar)}" target="_blank" rel="noopener">${p.status === 'publish' ? 'Ver' : 'Editar'}</a></li>`).join('')}</ul>` : '<p class="config-dica">Nenhum post ainda.</p>';
+    } catch (err) { caixa.innerHTML = `<p class="login-erro">${esc(err.message || 'Não consegui ler os posts.')}</p>`; } finally { b.disabled = false; }
+  }
+});
+async function mandarProWordPress(botao, caminho) {
+  if (!confirm(`Mandar "${nomeDe(caminho)}" pro WordPress como rascunho?\n\nTítulo, categorias, tags e imagem destacada vêm do frontmatter da nota (ou do primeiro "# Título"). As imagens da nota sobem junto.`)) return;
+  botao.disabled = true; const antes = botao.textContent; botao.textContent = 'Enviando…';
+  try {
+    const r = await fetch('/api/wordpress/publicar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ arquivo: caminho, status: 'draft' }) });
+    if (r.status === 401) return mostrarLogin();
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(j.erro || 'Não consegui mandar pro WordPress.'); return; }
+    if (confirm(`Rascunho salvo no WordPress (post ${j.id}). Abrir pra revisar e publicar?`)) window.open(j.editar, '_blank', 'noopener');
+  } finally { botao.disabled = false; botao.textContent = antes; }
+}
+
 async function conectarWhats(botao) {
   botao.disabled = true; qrVencido = false;
   try {
