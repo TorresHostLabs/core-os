@@ -3,7 +3,8 @@
 Cada versão tem um **codinome**: o nome de um personagem da **DC** ou de **Star Wars**, sem repetir, e **cada nome já tem a sua versão reservada** nos bancos abaixo. Você sabe hoje qual personagem cada release vai receber.
 
 - **Versões especiais** (as que terminam em `.0`: `v0.1.0`, `v0.5.0`, `v1.0.0`…) levam um **protagonista**, do banco de protagonistas.
-- **Versões de correção** (`v0.0.3`, `v0.1.2`…) levam um **coadjuvante que conserta** (mecânico, engenheiro, técnico, médico…), do banco de codinomes.
+- **Versões de correção** (`v0.0.3`, `v0.1.2`…) levam um **coadjuvante**, do banco de codinomes (até a `v0.9.4`, só os que consertam).
+- **Versões de 4 números** (`v0.0.3.1`, `v1.0.0.2`…) **herdam o nome** da versão de 3 números: `v0.0.3.1` e `v0.0.3.2` também são Barbara Gordon. Elas não têm reserva própria.
 
 A tag continua sendo o número (`v0.1.0`); o codinome vai no título da release e numa etiqueta da imagem Docker.
 
@@ -62,7 +63,7 @@ Versões especiais (`vX.Y.0`). A coluna "Versão" é a reserva.
 
 ## Banco de codinomes
 
-Versões de correção: **coadjuvantes que consertam** (mecânicos, engenheiros, técnicos, construtores de droides, médicos e curandeiros). A coluna "Versão" é a reserva: 3 correções pra fechar a `v0.0.x` e depois 4 por versão especial (`v0.1.1` a `v0.1.4`, `v0.2.1` a `v0.2.4`…).
+Versões de correção. Primeiro os **coadjuvantes que consertam** (mecânicos, engenheiros, técnicos, construtores de droides, médicos e curandeiros), da `v0.0.3` à `v0.9.4`; depois o Din Djarin e os demais coadjuvantes, a partir da `v1.0.1`. A coluna "Versão" é a reserva: 3 correções pra fechar a `v0.0.x` e depois 4 por versão especial (`v0.1.1` a `v0.1.4`, `v0.2.1` a `v0.2.4`…).
 
 | Ordem | Codinome | Universo | Versão |
 |---|---|---|---|
@@ -107,3 +108,33 @@ Versões de correção: **coadjuvantes que consertam** (mecânicos, engenheiros,
 | 39 | Doctor Aphra | Star Wars | v0.9.3 |
 | 40 | Ryan Choi | DC | v0.9.4 |
 | 41 | Din Djarin | Star Wars | v1.0.1 |
+| 42 | Wicket | Star Wars | v1.0.2 |
+| 43 | Zatanna | DC | v1.0.3 |
+| 44 | Bodhi Rook | Star Wars | v1.0.4 |
+| 45 | Nien Nunb | Star Wars | v1.1.1 |
+| 46 | Padmé Amidala | Star Wars | v1.1.2 |
+| 47 | John Constantine | DC | v1.1.3 |
+| 48 | Selina Kyle | DC | v1.1.4 |
+| 49 | Lando Calrissian | Star Wars | v1.2.1 |
+| 50 | Mace Windu | Star Wars | v1.2.2 |
+| 51 | Qui-Gon Jinn | Star Wars | v1.2.3 |
+| 52 | Dick Grayson | DC | v1.2.4 |
+| 53 | Dinah Lance | DC | v1.3.1 |
+| 54 | Bo-Katan Kryze | Star Wars | v1.3.2 |
+| 55 | Wedge Antilles | Star Wars | v1.3.3 |
+| 56 | Poe Dameron | Star Wars | v1.3.4 |
+| 57 | C-3PO | Star Wars | v1.4.1 |
+| 58 | James Gordon | DC | v1.4.2 |
+| 59 | Jimmy Olsen | DC | v1.4.3 |
+| 60 | Hera Syndulla | Star Wars | v1.4.4 |
+| 61 | Perry White | DC | v1.5.1 |
+| 62 | Sabine Wren | Star Wars | v1.5.2 |
+| 63 | Martha Kent | DC | v1.5.3 |
+| 64 | Iris West | DC | v1.5.4 |
+| 65 | Maz Kanata | Star Wars | v1.6.1 |
+| 66 | K-2SO | Star Wars | v1.6.2 |
+| 67 | Mera | DC | v1.6.3 |
+| 68 | Ackbar | Star Wars | v1.6.4 |
+| 69 | Etta Candy | DC | v1.7.1 |
+| 70 | Steve Trevor | DC | v1.7.2 |
+| 71 | Renee Montoya | DC | v1.7.3 |
