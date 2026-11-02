@@ -27,7 +27,7 @@ Abra o Claude Code na VPS e cole:
 Ou à mão: `git clone https://github.com/TorresHostLabs/core-os /root/core-os && cd /root/core-os/skill && sudo bash instalar.sh --nome "Seu Nome"`.
 
 ## Docker / Dokploy
-A imagem do painel é construída pelo GitHub Actions **só ao publicar uma versão** (tag `vX.Y.Z`, com codinome de um personagem da DC ou de Star Wars tirado do banco de codinomes em [VERSOES.md](VERSOES.md); `./versao.sh registrar vX.Y.Z "o que mudou"`) e publicada no GHCR (`ghcr.io/torreshostlabs/core-os`); o servidor só puxa a imagem pronta, sem compilar nada. Passo a passo, variáveis e o trecho do compose em [docs/dokploy.md](docs/dokploy.md).
+A imagem do painel é construída pelo GitHub Actions **só ao publicar uma versão** (tag `vX.Y.Z`, com codinome de um personagem da DC ou de Star Wars tirado dos bancos em [VERSOES.md](VERSOES.md), com protagonista nas versões especiais `vX.Y.0`; `./versao.sh registrar vX.Y.Z "o que mudou"`) e publicada no GHCR (`ghcr.io/torreshostlabs/core-os`); o servidor só puxa a imagem pronta, sem compilar nada. Passo a passo, variáveis e o trecho do compose em [docs/dokploy.md](docs/dokploy.md).
 
 ## Instalar no Dokploy
 Alternativa ao `instalar.sh` para quem já tem o [Dokploy](https://dokploy.com) no servidor. O Dokploy já usa as portas 80/443 (Traefik) e 3000, então aqui tudo roda em containers (painel, n8n, Evolution, Postgres, Redis), sem Caddy, sem ufw e sem systemd. O motor padrão é o Codex (OpenAI). Os arquivos ficam em `dokploy/`.
