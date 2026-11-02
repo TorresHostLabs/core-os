@@ -26,6 +26,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # cada versão tem um codinome (personagem da DC ou de Star Wars): da tabela de VERSOES.md ou, se faltar, o próximo do banco
+      # (versão especial vX.Y.0: banco de protagonistas)
       - name: Codinome da versão
         env:
           GH_TOKEN: ${{ github.token }}
@@ -36,7 +37,8 @@ jobs:
           VERSAO_USADOS=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             --jq ".[] | select((.tag_name | split(\"-\")[0]) != \"${tag%%-*}\") | (.name // \"\") | split(\" · \") | .[1] // empty")
           export VERSAO_USADOS
-          r=$(./versao.sh codinome "$tag" 2>erro.txt) || { echo "::error::$(cat erro.txt)"; exit 1; }
+          erro="${RUNNER_TEMP:-/tmp}/codinome-erro.txt"
+          r=$(./versao.sh codinome "$tag" 2>"$erro") || { echo "::error::$(cat "$erro")"; exit 1; }
           IFS=$'\t' read -r codinome universo origem <<<"$r"
           echo "CODINOME=$codinome" >> "$GITHUB_ENV"
           echo "### $tag · $codinome ($universo)" >> "$GITHUB_STEP_SUMMARY"
